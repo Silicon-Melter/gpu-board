@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GPU Board</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: status notice, control bar, a "needs your call" queue, then one lane per machine (device readings on top, its jobs below), like a dispatch board; protocol on its own tab */
+:root {
+  --bg: #eef1f0; --surface: #fbfcfc; --surface-2: #f3f6f5; --ink: #131a18; --muted: #5a6661; --line: #d5dcd9;
+  --accent: #0e6a5f; --accent-soft: #dceeea;
+  --run: #2257ad; --run-bg: #e3ebf9; --queue: #855600; --queue-bg: #f7ebd2; --pause: #6546ab; --pause-bg: #ebe5f7;
+  --go: #19743a; --go-bg: #dcf1e3; --hold: #5f676d; --hold-bg: #e6e9eb; --bad: #b22a1f; --bad-bg: #fae4e1; --stale: #a84a06; --stale-bg: #fcebdc;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
+  --accent: #4cc1ae; --accent-soft: #163631;
+  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
+  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
+  --accent: #4cc1ae; --accent-soft: #163631;
+  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
+  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, a:focus-visible, label:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+
+.notice { background: var(--queue-bg); color: var(--queue); border-bottom: 1px solid var(--line); }
+.notice .wrap { padding-block: 9px; font-size: 13px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.notice b { font-weight: 700; }
+.ptext { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55; max-width: 80ch; }
+
+.top .wrap { padding-block: 20px 12px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: end; justify-content: space-between; }
+.brand h1 { font-family: var(--display); font-stretch: 72%; font-weight: 800; font-size: 34px; letter-spacing: -.01em; line-height: 1; text-transform: uppercase; }
+.brand p { margin: 6px 0 0; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: none; padding: 6px 12px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+.seg-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
+.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; border-radius: 6px; }
+
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-block: 8px 22px; }
+.stat { background: var(--surface); padding: 12px 14px; }
+.stat b { display: block; font-family: var(--display); font-stretch: 80%; font-size: 28px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.stat.hot b { color: var(--queue); }
+.stat.warn b { color: var(--stale); }
+.stat.bad b { color: var(--bad); }
+
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-bottom: 10px; }
+.sec-head h2 { font-family: var(--display); font-stretch: 80%; font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+.sec-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.sec-head .btn { margin-left: auto; }
+
+.calls { margin-bottom: 28px; }
+.call-list { display: grid; gap: 8px; }
+.call { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--queue); border-radius: var(--radius); padding: 12px 14px; }
+.call.blocked-hold { border-left-color: var(--hold); }
+.call-main { min-width: 0; display: grid; gap: 3px; }
+.call-task { font-weight: 650; }
+.call-why { color: var(--muted); font-size: 13px; }
+.call-why b { color: var(--ink); font-weight: 600; }
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); padding: 14px; color: var(--muted); }
+
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 7px; padding: 6px 12px; font-weight: 650; font-size: 13px; }
+.btn:hover { border-color: var(--muted); }
+.btn.go { background: var(--go); border-color: var(--go); color: var(--surface); }
+.btn.wait { background: var(--queue-bg); border-color: var(--queue); color: var(--queue); }
+.btn.bump { background: var(--surface); border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.link { background: none; border-color: transparent; color: var(--accent); padding-inline: 4px; text-decoration: underline; text-underline-offset: 2px; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+.lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 14px; align-items: start; margin-bottom: 40px; }
+.lane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.lane.on_hold { background: var(--surface-2); }
+.lane-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 14px 14px 12px; border-bottom: 1px solid var(--line); }
+.lane-head h3 { font-family: var(--display); font-stretch: 85%; font-size: 19px; font-weight: 700; }
+.lane-sub { color: var(--muted); }
+.lane-note { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.status { border: 1px solid transparent; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; letter-spacing: .03em; align-self: start; white-space: nowrap; background: none; }
+.status.available { color: var(--go); background: var(--go-bg); }
+.status.on_hold { color: var(--hold); background: var(--hold-bg); }
+button.status:hover { border-color: currentColor; }
+
+/* components: each device is a collapsible header with its own jobs underneath */
+.lane-tools { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.cols, .dev { display: grid; grid-template-columns: 14px minmax(0, 1fr) 58px 46px minmax(96px, 1.3fr); gap: 8px; align-items: center; padding-inline: 14px; }
+.cols { padding-block: 5px; background: var(--surface-2); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); }
+.comp { border-bottom: 1px solid var(--line); }
+.comp:last-child { border-bottom: 0; }
+.lane .comp:last-child { border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+.dev { width: 100%; border: 0; background: var(--surface-2); padding-block: 9px; text-align: left; font-size: 12.5px; }
+.dev:hover { background: var(--accent-soft); }
+.dev:focus-visible { outline-offset: -2px; }
+.chev { width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg) translate(-2px, -2px); }
+.dev[aria-expanded="false"] .chev { transform: rotate(-45deg); }
+.dev-name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; font-size: 13px; }
+.dev-name small { color: var(--muted); font-weight: 400; font-size: 11.5px; margin-left: 4px; }
+.dev-sum { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; color: var(--muted); font-size: 11.5px; margin-top: -2px; }
+.flag { font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 4px; letter-spacing: .02em; white-space: nowrap; }
+.flag.call { color: var(--queue); background: var(--queue-bg); }
+.flag.bad { color: var(--bad); background: var(--bad-bg); }
+.comp-jobs { background: var(--surface); }
+.comp-jobs .job { padding-left: 36px; }
+.comp-jobs .job::before { left: 20px; }
+.comp-empty { padding: 10px 14px 12px 36px; color: var(--muted); font-size: 12.5px; }
+@media (prefers-reduced-motion: no-preference) { .chev { transition: transform .15s ease; } }
+.t { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+.t.warm { color: var(--stale); }
+.t.hot { color: var(--bad); font-weight: 700; }
+.t.none { color: var(--muted); }
+.mem { display: grid; gap: 3px; min-width: 0; }
+.mem .track { height: 5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.mem .track i { display: block; height: 100%; background: var(--accent); }
+.mem span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.reading { font-size: 12px; color: var(--muted); }
+.reading.old { color: var(--stale); }
+
+.job { padding: 12px 14px; display: grid; gap: 6px; border-top: 1px solid var(--line); position: relative; }
+.job:first-child { border-top: 0; }
+.job::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--line); }
+.job[data-state="running"]::before { background: var(--run); }
+.job[data-state="queued"]::before { background: var(--queue); }
+.job[data-state="paused"]::before { background: var(--pause); }
+.job[data-state="blocked"]::before, .job[data-state="failed"]::before { background: var(--bad); }
+.job[data-state="done"]::before { background: var(--go); }
+.row1 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pill { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border-radius: 5px; }
+.p-running { color: var(--run); background: var(--run-bg); }
+.p-queued { color: var(--queue); background: var(--queue-bg); }
+.p-paused { color: var(--pause); background: var(--pause-bg); }
+.p-blocked, .p-failed { color: var(--bad); background: var(--bad-bg); }
+.p-done { color: var(--go); background: var(--go-bg); }
+.chip { font-size: 11px; padding: 1px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.res { font-family: var(--mono); color: var(--ink); }
+.chip.retina { border-color: var(--pause); color: var(--pause); }
+.chip.stale { border-color: transparent; background: var(--stale-bg); color: var(--stale); font-weight: 700; }
+.ago { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.task { font-weight: 650; overflow-wrap: anywhere; }
+.meta { color: var(--muted); overflow-wrap: anywhere; }
+.prog { display: grid; gap: 4px; }
+.bar { height: 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--run); }
+.job[data-state="paused"] .bar i { background: var(--pause); }
+.job[data-state="blocked"] .bar i { background: var(--bad); }
+.prog-text { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prog-text b { color: var(--ink); font-weight: 600; }
+.decision, .health { font-size: 12.5px; padding: 6px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); overflow-wrap: anywhere; }
+.decision b.go { color: var(--go); }
+.decision b.wait { color: var(--queue); }
+.decision .seen { color: var(--ink); }
+.health b { font-weight: 700; }
+.health.ok b { color: var(--go); }
+.health.pending b { color: var(--accent); }
+.health.dead { background: var(--bad-bg); color: var(--bad); }
+.health q { font-family: var(--mono); font-size: 11.5px; color: var(--ink); quotes: "“" "”"; }
+.health.dead q { color: var(--bad); }
+.result { font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 2px; }
+.paste { display: flex; gap: 6px; flex-wrap: wrap; }
+.paste input { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 12px; font-family: var(--mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.paste .err { color: var(--bad); font-size: 12px; width: 100%; }
+
+.protocol { max-width: 780px; margin-bottom: 48px; }
+.protocol .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+.protocol ol { margin: 0; padding-left: 22px; display: grid; gap: 12px; }
+.protocol li::marker { font-family: var(--display); font-weight: 800; color: var(--accent); }
+.protocol code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.protocol pre { font-family: var(--mono); font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 8px 0 0; }
+.protocol table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.protocol th, .protocol td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.protocol th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.tbl { overflow-x: auto; margin-top: 16px; }
+
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); max-width: min(580px, calc(100% - 32px)); background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgb(0 0 0 / .25); z-index: 20; }
+
+@media (max-width: 560px) {
+  .call { grid-template-columns: minmax(0, 1fr); }
+  .brand h1 { font-size: 28px; }
+  .cols, .dev { grid-template-columns: 12px minmax(0, 1fr) 50px 38px minmax(72px, 1fr); gap: 6px; padding-inline: 10px; }
+  .comp-jobs .job { padding-left: 28px; }
+  .comp-jobs .job::before { left: 14px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .job.flash, .dev.flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+}
+</style>
+<style>
+body { margin: 0; }
+[hidden] { display: none !important; }
+.setup { max-width: 640px; margin-block: 8px 48px; }
+.setup .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 12px; }
+.setup ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.setup input { font: inherit; font-family: var(--mono); font-size: 13px; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); width: 100%; }
+.setup .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.setup .err { color: var(--bad); font-size: 13px; }
+.fine { color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="notice" id="notice" role="status" hidden><div class="wrap" id="notice-text"></div></div>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>GPU Board</h1>
+      <p>What runs on each machine, how hot it is, and what waits for your go-ahead.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Page">
+        <button type="button" data-tab="board" aria-pressed="true">Board</button>
+        <button type="button" data-tab="protocol" aria-pressed="false">Agent protocol</button>
+      </div>
+      <label class="check"><input type="checkbox" id="hide-done" checked> Hide done</label>
+      <button type="button" class="btn link" id="forget" hidden>Forget token</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="setup" class="setup" hidden>
+    <div class="sec-head"><h2>Connect the board</h2></div>
+    <div class="card">
+      <p>The board reads and writes the private repo <span class="mono">Silicon-Melter/agent-board</span> with a GitHub token that stays in this browser.</p>
+      <ol>
+        <li>On GitHub, open Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
+        <li>Repository access: <b>Only select repositories</b> → <span class="mono">agent-board</span>.</li>
+        <li>Permissions → Repository permissions → <b>Contents: Read and write</b>. Nothing else.</li>
+      </ol>
+      <form class="row" id="token-form">
+        <input id="token-input" type="password" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token">
+        <button type="submit" class="btn go">Connect</button>
+      </form>
+      <div class="err" id="token-err" hidden></div>
+      <p class="fine">Saved in this browser's storage for this site only. Use "Forget token" on a shared computer.</p>
+    </div>
+  </section>
+
+  <section id="board" hidden>
+    <div class="summary" id="summary"></div>
+    <section class="calls" aria-labelledby="calls-h">
+      <div class="sec-head"><h2 id="calls-h">Needs your call</h2><p>Queued GPU jobs with no decision yet, oldest first.</p></div>
+      <div class="call-list" id="calls"></div>
+    </section>
+    <div class="sec-head"><h2>Machines</h2><p>Each PC's sync service reports temperatures, jobs and whether each process is alive, every 2 minutes and right after a change.</p><span id="bump-all-slot"></span></div>
+    <div class="lanes" id="lanes"></div>
+  </section>
+
+  <section id="protocol" class="protocol" hidden>
+    <div class="sec-head"><h2>Agent protocol</h2><p>The gpu-board skill in the agent-board plugin, which every agent follows.</p></div>
+    <div class="card"><div class="ptext" id="protocol-text">Loading…</div></div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function () {
+  const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
+  const MIN = 60e3, HR = 3600e3;
+  const POLL = 30e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 5 * MIN, KEEP_CALLS = 14 * 24 * HR;
+  const LIVE = ["running", "paused", "queued"];
+  const ORDER = { running: 0, paused: 1, blocked: 2, queued: 3, failed: 4, done: 5 };
+  const LABEL = { running: "Running", queued: "Queued", paused: "Paused", blocked: "Blocked", done: "Done", failed: "Failed" };
+  const LIMIT = { gpu: [80, 87], cpu: [85, 95] }; // warm, hot (°C)
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
+  };
+  const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, jobs: [],
+    protocol: null, tab: "board", hideDone: true, busy: {}, loading: false };
+  let collapsed = {};
+  try { collapsed = JSON.parse(store.get("gpu-board.collapsed") || "{}") || {}; } catch (e) { collapsed = {}; }
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const ms = (v) => typeof v === "number" ? (v < 1e12 ? v * 1000 : v) : Date.parse(v || "");
+  const nowIso = () => new Date().toISOString();
+  const machines = () => ((S.control && S.control.machines) || []).slice().sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+  const machine = (id) => machines().find((m) => m.id === id);
+  const job = (id) => S.jobs.find((j) => j.id === id);
+  const decisions = () => (S.control && S.control.decisions) || {};
+  const bumps = () => (S.control && S.control.bumps) || {};
+  const devicesOf = (m) => (m && Array.isArray(m.devices) ? m.devices : []);
+  const device = (m, res) => devicesOf(m).find((d) => d.id === res) || { id: res, label: res || "?", kind: res === "cpu" ? "cpu" : "gpu" };
+  const isGpu = (j) => device(machine(j.machine), j.res).kind === "gpu";
+  const isStale = (j) => j.state === "running" && Date.now() - ms(j.updated) > 2 * HR;
+  const acctChip = (j) => j.account && j.account !== "unknown" ? '<span class="chip ' + (j.account === "retina" ? "retina" : "") + '">' + esc(j.account) + "</span>" : "";
+  const sessionUrl = (s) => (/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(String(s || "")) ? s : null);
+
+  function ago(ts) {
+    const d = Date.now() - ts;
+    if (!isFinite(d)) return "at an unknown time";
+    if (d < 45e3) return "just now";
+    if (d < HR) return Math.max(1, Math.round(d / MIN)) + " min ago";
+    if (d < 48 * HR) { const h = Math.floor(d / HR), m = Math.round((d % HR) / MIN); return h + " h" + (m ? " " + m + " min" : "") + " ago"; }
+    return Math.round(d / (24 * HR)) + " d ago";
+  }
+  function heat(kind, t) {
+    if (t == null) return "none";
+    const [warm, hot] = LIMIT[kind] || LIMIT.gpu;
+    return t >= hot ? "hot" : t >= warm ? "warm" : "";
+  }
+
+  // ---- GitHub ------------------------------------------------------------------------------------------------
+  function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0))); }
+  function b64encode(text) { let bin = ""; new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); }
+  async function gh(path, opts) {
+    const r = await fetch(API + path, Object.assign({ cache: "no-store" }, opts, {
+      headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
+    }));
+    if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
+    return r;
+  }
+  async function readFile(path, ref) {
+    const r = await gh("/contents/" + path + "?ref=" + encodeURIComponent(ref));
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("GitHub said " + r.status + " for " + path + " on " + ref);
+    const j = await r.json();
+    return { text: b64decode(j.content), sha: j.sha };
+  }
+  async function writeFile(path, ref, text, sha, message) {
+    const r = await gh("/contents/" + path, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, content: b64encode(text), sha, branch: ref }) });
+    if (r.status === 409 || r.status === 422) { const e = new Error("changed meanwhile"); e.conflict = true; throw e; }
+    if (!r.ok) throw new Error("GitHub said " + r.status + " when saving");
+  }
+
+  async function load() {
+    if (!S.token || S.loading) return;
+    S.loading = true;
+    try {
+      const c = await readFile("control.json", "board/control");
+      if (!c) throw new Error("The board/control branch is missing in agent-board.");
+      S.control = JSON.parse(c.text);
+      const states = {};
+      await Promise.all(machines().map(async (m) => { const f = await readFile("state.json", "board/" + m.id); states[m.id] = f ? JSON.parse(f.text) : null; }));
+      S.states = states;
+      S.jobs = [];
+      Object.entries(states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => S.jobs.push(Object.assign({}, j, { id, machine: mid }))); });
+      if (!S.protocol) { const p = await readFile("plugins/gpu-board/skills/gpu-board/SKILL.md", "main"); S.protocol = p ? p.text.replace(/^---[\s\S]*?---\s*/, "") : ""; }
+      S.status = "ready"; S.error = "";
+    } catch (e) {
+      if (e.auth) { S.token = null; store.set("gpu-board.token", null); S.status = "need-token"; S.error = "GitHub rejected that token. Check it has Contents read and write on agent-board."; }
+      else { S.error = String(e.message || e); if (S.status !== "ready") S.status = "error"; }
+    }
+    S.loading = false;
+    refresh();
+  }
+
+  // Read-modify-write control.json; retry once if someone saved in between.
+  async function saveControl(mutate, message) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const c = await readFile("control.json", "board/control");
+      const data = JSON.parse(c.text);
+      mutate(data);
+      const cutoff = Date.now() - KEEP_CALLS;
+      ["decisions", "bumps"].forEach((k) => { Object.keys(data[k] || {}).forEach((id) => { if (ms(data[k][id].at) < cutoff) delete data[k][id]; }); });
+      try { await writeFile("control.json", "board/control", JSON.stringify(data, null, 1) + "\n", c.sha, message); S.control = data; return; }
+      catch (e) { if (!e.conflict || attempt) throw e; }
+    }
+  }
+
+  // ---- derived state ------------------------------------------------------------------------------------------
+  function machineTel(id) {
+    const st = S.states[id];
+    if (!st) return null;
+    const age = Date.now() - ms(st.at);
+    return { st, age, silent: age > SYNC_SILENT };
+  }
+  function needsCall(j) { return j.state === "queued" && !decisions()[j.id]; }
+  function bumpOf(j) {
+    const b = bumps()[j.id]; if (!b) return null;
+    const t = machineTel(j.machine);
+    const answered = !!(t && ms(t.st.at) > ms(b.at));
+    return { at: ms(b.at), answered, late: !answered && Date.now() - ms(b.at) > BUMP_LATE };
+  }
+  function processGone(j) { return j.alive === false && ["running", "paused", "blocked"].includes(j.state); }
+  function needsLook(j) { const b = bumpOf(j); return isStale(j) || (b && b.late) || j.state === "blocked" || processGone(j); }
+
+  function why(j) {
+    const m = machine(j.machine), d = device(m, j.res);
+    if (!m) return "<b>Unknown machine</b> " + esc(j.machine);
+    if (m.status === "on_hold") return "<b>Machine on hold.</b> Set it available before you release this.";
+    const others = S.jobs.filter((o) => o.machine === j.machine && o.res === j.res && o.id !== j.id && LIVE.includes(o.state));
+    const running = others.filter((o) => o.state === "running");
+    if (running.length) return "<b>" + esc(d.label) + " busy:</b> " + esc(running[0].task) + (running[0].eta ? " (" + esc(running[0].eta) + " left)" : "");
+    if (others.length) return "<b>Behind</b> " + others.length + " other job" + (others.length > 1 ? "s" : "") + " on " + esc(d.label);
+    return "<b>" + esc(d.label) + " free.</b> The agent is waiting for your go.";
+  }
+
+  // ---- rendering ----------------------------------------------------------------------------------------------
+  function decisionLine(j) {
+    const d = decisions()[j.id];
+    if (!d) return j.auto && j.state !== "queued" && j.state !== "done" ? '<div class="decision">Started on its own: ' + (isGpu(j) ? "the GPU was free." : "CPU and background tasks don't wait.") + "</div>" : "";
+    const verb = d.verdict === "go" ? '<b class="go">Go ahead</b>' : '<b class="wait">Wait</b>';
+    const seen = j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>' : " · the PC picks it up within a minute";
+    return '<div class="decision">' + verb + " " + ago(ms(d.at)) + seen + "</div>";
+  }
+
+  function healthLine(j) {
+    if (!["running", "paused", "blocked"].includes(j.state)) return "";
+    let out = "";
+    const t = machineTel(j.machine);
+    const w = j.watch || {};
+    const what = w.pid ? "pid " + w.pid : w.unit ? "unit " + w.unit : "";
+    const detail = (what ? " · " + esc(what) : "") + (j.last ? " · last log <q>" + esc(j.last) + "</q>" : "") + (t ? " · checked " + ago(ms(t.st.at)) : "");
+    if (t && t.silent) out += '<div class="health dead"><b>Can\'t confirm</b>: this PC\'s sync has been silent since ' + ago(ms(t.st.at)) + ".</div>";
+    else if (j.alive === false) out += '<div class="health dead"><b>Process gone</b>' + detail + "</div>";
+    else if (j.alive === true) out += '<div class="health ok"><b>Alive</b>' + detail + "</div>";
+    else if (j.state === "running") out += '<div class="health">No process handed to the sync service yet (<span class="mono">board-job watch</span>).</div>';
+    const b = bumpOf(j);
+    if (b && !b.answered) out += b.late
+      ? '<div class="health dead"><b>No answer</b> to the bump sent ' + ago(b.at) + ". The PC's sync service may be down.</div>"
+      : '<div class="health pending"><b>Bumped</b> ' + ago(b.at) + " · the PC answers within a minute or two</div>";
+    return out;
+  }
+
+  function jobCard(j) {
+    const m = machine(j.machine);
+    const busy = S.busy[j.id];
+    const chips = [
+      j.bg ? '<span class="chip">background</span>' : "",
+      j.auto ? '<span class="chip" title="Started without a go-ahead">auto</span>' : "",
+      acctChip(j),
+      isStale(j) ? '<span class="chip stale" title="Running with no update from the agent for over 2 hours">stale</span>' : ""
+    ].join("");
+    const pct = Math.max(0, Math.min(100, Number(j.pct) || 0));
+    const showProg = ["running", "paused", "blocked", "done", "failed"].includes(j.state);
+    const progText = j.state === "done" || j.state === "failed"
+      ? '<span class="result">' + esc(j.result || (j.state === "done" ? "Finished" : "Failed")) + "</span>"
+      : "<b>" + pct + "%</b>" + (j.progress ? " · " + esc(j.progress) : "") + (j.eta && j.state !== "blocked" ? " · ETA " + esc(j.eta) : "");
+    const plan = j.state === "queued" ? '<div class="prog-text">Needs ≈ ' + esc(j.vram_gb ?? "?") + " GB VRAM for ≈ " + esc(j.est_hours ?? "?") + " h</div>" : "";
+    let actions = "";
+    if (j.state !== "done" && j.state !== "failed") {
+      const dec = decisions()[j.id], b = bumpOf(j);
+      const dis = (x) => (busy || x ? " disabled" : "");
+      if (["running", "paused", "blocked"].includes(j.state))
+        actions += '<button type="button" class="btn bump" data-act="bump" data-id="' + esc(j.id) + '"' + dis(b && !b.answered && !b.late) + ' title="Ask the PC for fresh readings, liveness and the last log line now">Bump</button>';
+      if (j.state !== "running" && j.state !== "blocked")
+        actions += '<button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + dis(!m || m.status === "on_hold") + ">Go ahead</button>";
+      if (j.state !== "blocked")
+        actions += '<button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + dis(dec && dec.verdict === "wait" && j.state !== "running") + ">Wait</button>";
+    }
+    const url = sessionUrl(j.session);
+    if (url) actions += '<a class="btn link" href="' + esc(url) + '" target="_blank" rel="noopener">Open session</a>';
+    const state = LABEL[j.state] ? j.state : "queued";
+    return '<div class="job" data-state="' + state + '" data-id="' + esc(j.id) + '">' +
+      '<div class="row1"><span class="pill p-' + state + '">' + (LABEL[j.state] || esc(j.state || "?")) + "</span>" + chips + '<span class="ago" title="Last update from the agent">' + ago(ms(j.updated)) + "</span></div>" +
+      '<div class="task">' + esc(j.task || j.id) + "</div>" +
+      '<div class="meta mono">' + esc(j.repo || "") + " · " + esc(j.id) + "</div>" +
+      (showProg ? '<div class="prog">' + (j.state !== "done" && j.state !== "failed" ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : "") + '<div class="prog-text">' + progText + "</div></div>" : plan) +
+      healthLine(j) + decisionLine(j) +
+      (actions ? '<div class="actions">' + actions + "</div>" : "") +
+      "</div>";
+  }
+
+  function reading(m) {
+    const t = machineTel(m.id);
+    if (!t) return '<span class="reading">No sync from this PC yet. Run tools/install.sh on it.</span>';
+    if (t.silent) return '<span class="reading old">Sync silent since ' + ago(ms(t.st.at)) + ". The PC may be off or offline.</span>";
+    return '<span class="reading">Synced ' + ago(ms(t.st.at)) + "</span>";
+  }
+
+  function component(m, d, jobs) {
+    const key = m.id + ":" + d.id;
+    const open = !collapsed[key];
+    const t = machineTel(m.id);
+    const r = t && t.st.devices ? t.st.devices[d.id] || null : null;
+    const h = heat(d.kind, r && r.t);
+    const total = (r && r.mt) || d.mem;
+    const pct = r && r.m != null && total ? Math.min(100, (r.m / total) * 100) : 0;
+    const count = (s) => jobs.filter((j) => j.state === s).length;
+    const parts = ["running", "paused", "queued", "blocked"].map((s) => count(s) ? count(s) + " " + s : "").filter(Boolean);
+    const calls = jobs.filter(needsCall).length;
+    const trouble = jobs.filter(needsLook).length;
+    const summary = "<span>" + (parts.length ? parts.join(", ") : "idle") + "</span>" +
+      (calls ? ' <span class="flag call">' + calls + " needs your call</span>" : "") +
+      (trouble ? ' <span class="flag bad">' + trouble + " needs a look</span>" : "");
+    const empty = m.status === "on_hold" ? "On hold." : d.kind === "gpu" ? "Free. The next GPU job here starts on its own." : "Nothing logged on the CPU.";
+    const fmt = (v, unit) => (v == null ? "—" : Math.round(v) + unit);
+    return '<div class="comp">' +
+      '<button type="button" class="dev" data-act="collapse" data-key="' + esc(key) + '" aria-expanded="' + open + '" title="' + (open ? "Collapse" : "Expand") + " " + esc(d.label) + ' tasks">' +
+        '<span class="chev" aria-hidden="true"></span>' +
+        '<span class="dev-name">' + esc(d.label) + "<small>" + esc(d.model || "") + "</small></span>" +
+        '<span class="t ' + (r ? h : "none") + '">' + (r ? fmt(r.t, " °C") : "—") + "</span>" +
+        '<span class="t num">' + (r ? fmt(r.u, "%") : "—") + "</span>" +
+        '<span class="mem"><span class="track"><i style="width:' + pct + '%"></i></span><span>' + (r && r.m != null ? Number(r.m).toFixed(1) : "—") + " / " + (total ? esc(total) : "—") + " GB</span></span>" +
+        '<span class="dev-sum">' + summary + "</span>" +
+      "</button>" +
+      '<div class="comp-jobs"' + (open ? "" : " hidden") + ">" + (jobs.length ? jobs.map(jobCard).join("") : '<div class="comp-empty">' + empty + "</div>") + "</div>" +
+      "</div>";
+  }
+
+  function render() {
+    const connected = !!S.token;
+    $("setup").hidden = connected;
+    $("board").hidden = !connected || S.tab !== "board";
+    $("protocol").hidden = !connected || S.tab !== "protocol";
+    $("forget").hidden = !connected;
+    document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === S.tab)));
+    $("hide-done").checked = S.hideDone;
+    $("token-err").hidden = !(S.status === "need-token" && S.error);
+    $("token-err").textContent = S.status === "need-token" ? S.error : "";
+
+    const notice = !connected ? "" : S.status === "loading" ? "Loading the board…" : S.error ? esc(S.error) + " Retrying every 30 s." : "";
+    $("notice").hidden = !notice;
+    $("notice-text").innerHTML = notice;
+    $("protocol-text").textContent = S.protocol == null ? "Loading…" : S.protocol || "The protocol file is missing.";
+    if (!connected || !S.control) return;
+
+    const live = S.jobs.filter((j) => j.state !== "done" && j.state !== "failed");
+    const calls = S.jobs.filter(needsCall).sort((a, b) => ms(a.created) - ms(b.created));
+    const trouble = S.jobs.filter(needsLook);
+    let hottest = null;
+    machines().forEach((m) => { const t = machineTel(m.id); if (!t || t.silent) return; devicesOf(m).forEach((d) => { const r = t.st.devices && t.st.devices[d.id]; if (r && r.t != null && d.kind === "gpu" && (hottest == null || r.t > hottest)) hottest = r.t; }); });
+    const syncing = machines().filter((m) => { const t = machineTel(m.id); return t && !t.silent; }).length;
+    const hh = heat("gpu", hottest);
+    $("summary").innerHTML = [
+      ["Running", live.filter((j) => j.state === "running").length, ""],
+      ["Queued", live.filter((j) => j.state === "queued").length, ""],
+      ["Needs your call", calls.length, calls.length ? "hot" : ""],
+      ["Needs a look", trouble.length, trouble.length ? "bad" : ""],
+      ["Hottest GPU", hottest != null ? Math.round(hottest) + " °C" : "—", hh === "hot" ? "bad" : hh === "warm" ? "warn" : ""],
+      ["PCs syncing", syncing + " / " + machines().length, ""]
+    ].map(([k, v, c]) => '<div class="stat ' + c + '"><b>' + v + "</b><span>" + k + "</span></div>").join("");
+
+    $("calls").innerHTML = calls.length ? calls.map((j) => {
+      const m = machine(j.machine), held = !m || m.status === "on_hold", d = device(m, j.res);
+      return '<div class="call' + (held ? " blocked-hold" : "") + '">' +
+        '<div class="call-main"><div class="row1"><span class="pill p-queued">Queued</span>' + acctChip(j) + '<span class="mono">' + esc(m ? m.name : j.machine) + " · " + esc(d.label) + '</span><span class="ago">waiting ' + ago(ms(j.created)).replace(" ago", "") + "</span></div>" +
+        '<div class="call-task">' + esc(j.task || j.id) + '</div><div class="call-why">' + why(j) + " · ≈ " + esc(j.vram_gb ?? "?") + " GB, ≈ " + esc(j.est_hours ?? "?") + " h</div></div>" +
+        '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button></div>" +
+        "</div>";
+    }).join("") : '<div class="empty">Nothing is waiting on you. A GPU job lands here when its agent queues on a busy GPU or an on-hold machine.</div>';
+
+    const runningCount = S.jobs.filter((j) => j.state === "running").length;
+    $("bump-all-slot").innerHTML = runningCount ? '<button type="button" class="btn bump" data-act="bump-all">Bump all running (' + runningCount + ")</button>" : "";
+
+    const ms_ = machines().sort((a, b) => (a.status === b.status ? 0 : a.status === "available" ? -1 : 1));
+    $("lanes").innerHTML = ms_.length ? ms_.map((m) => {
+      const jobs = S.jobs.filter((j) => j.machine === m.id && !(S.hideDone && j.state === "done")).sort((a, b) => (ORDER[a.state] ?? 9) - (ORDER[b.state] ?? 9) || ms(a.created) - ms(b.created));
+      const devs = devicesOf(m);
+      const allClosed = devs.length && devs.every((d) => collapsed[m.id + ":" + d.id]);
+      const known = new Set(devs.map((d) => d.id));
+      const stray = jobs.filter((j) => !known.has(j.res));
+      return '<article class="lane ' + esc(m.status) + '" data-machine="' + esc(m.id) + '">' +
+        '<div class="lane-head"><div><h3>' + esc(m.name || m.id) + '</h3><div class="lane-sub mono">' + esc(m.id) + (m.spec ? " · " + esc(m.spec) : "") + "</div></div>" +
+        '<button type="button" class="status ' + esc(m.status) + '" data-act="toggle" data-id="' + esc(m.id) + '" title="Click to switch">' + (m.status === "available" ? "Available" : "On hold") + "</button>" +
+        (m.note ? '<div class="lane-note">' + esc(m.note) + "</div>" : "") +
+        '<div class="lane-tools">' + reading(m) + '<button type="button" class="btn link" data-act="collapse-all" data-id="' + esc(m.id) + '">' + (allClosed ? "Expand all" : "Collapse all") + "</button></div>" +
+        "</div>" +
+        '<div class="cols"><span></span><span>Component</span><span>Temp</span><span>Use</span><span>Memory</span></div>' +
+        devs.map((d) => component(m, d, jobs.filter((j) => j.res === d.id))).join("") +
+        (stray.length ? '<div class="comp"><div class="comp-empty">Jobs naming an unknown component:</div><div class="comp-jobs">' + stray.map(jobCard).join("") + "</div></div>" : "") +
+        "</article>";
+    }).join("") : '<div class="empty">No machines in control.json yet.</div>';
+  }
+
+  let toastTimer;
+  function toast(msg) {
+    const el = $("toast");
+    el.textContent = msg; el.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 5000);
+  }
+  function keyOf(el) { return el && el.dataset ? (el.dataset.act || el.dataset.tab || "") + "|" + (el.dataset.id || el.dataset.key || "") : ""; }
+  function refresh() {
+    const k = keyOf(document.activeElement);
+    render();
+    if (k !== "|") { const el = [...document.querySelectorAll("button")].find((b) => keyOf(b) === k); if (el) el.focus({ preventScroll: true }); }
+  }
+
+  async function act(ids, label, mutate) {
+    ids.forEach((id) => { S.busy[id] = true; }); refresh();
+    try { await saveControl(mutate, label); toast(label + ". The PC picks it up within a minute."); }
+    catch (e) { toast("Couldn't save: " + (e.message || e) + "."); }
+    ids.forEach((id) => { delete S.busy[id]; }); refresh();
+  }
+
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.tab) { S.tab = b.dataset.tab; refresh(); return; }
+    if (b.id === "forget") { store.set("gpu-board.token", null); S.token = null; S.control = null; S.status = "need-token"; S.error = ""; refresh(); return; }
+    const a = b.dataset.act, id = b.dataset.id;
+    if (a === "collapse") { const k = b.dataset.key; if (collapsed[k]) delete collapsed[k]; else collapsed[k] = true; store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
+    if (a === "collapse-all") { const m = machine(id); const close = !devicesOf(m).every((d) => collapsed[m.id + ":" + d.id]); devicesOf(m).forEach((d) => { if (close) collapsed[m.id + ":" + d.id] = true; else delete collapsed[m.id + ":" + d.id]; }); store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
+    if (a === "go" || a === "wait") act([id], (a === "go" ? "Go ahead" : "Wait") + " for " + id, (d) => { (d.decisions = d.decisions || {})[id] = { verdict: a, at: nowIso() }; });
+    else if (a === "bump") act([id], "Bumped " + id, (d) => { (d.bumps = d.bumps || {})[id] = { at: nowIso() }; });
+    else if (a === "bump-all") { const ids = S.jobs.filter((j) => j.state === "running").map((j) => j.id); act(ids, "Bumped " + ids.length + " running jobs", (d) => { d.bumps = d.bumps || {}; ids.forEach((x) => { d.bumps[x] = { at: nowIso() }; }); }); }
+    else if (a === "toggle") { const m = machine(id); const status = m.status === "available" ? "on_hold" : "available"; act([], (m.name || id) + (status === "available" ? " is available" : " is on hold"), (d) => { (d.machines || []).forEach((x) => { if (x.id === id) x.status = status; }); }); }
+  });
+  $("token-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("token-input").value.trim();
+    if (!v) return;
+    S.token = v; store.set("gpu-board.token", v); $("token-input").value = ""; S.status = "loading"; S.error = "";
+    refresh(); load();
+  });
+  $("hide-done").addEventListener("change", (e) => { S.hideDone = e.target.checked; refresh(); });
+
+  if (!S.token) S.status = "need-token";
+  render();
+  load();
+  setInterval(() => { if (!document.hidden) load(); else refresh(); }, POLL);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>
