@@ -79,6 +79,17 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .call-why { color: var(--muted); font-size: 13px; }
 .call-why b { color: var(--ink); font-weight: 600; }
 .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); padding: 14px; color: var(--muted); }
+.queue { margin-bottom: 28px; }
+.qwrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.qtable { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
+.qtable th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.qtable td { padding: 9px 10px; border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.qtable tbody tr:first-child td { border-top: 0; }
+.qtable code { font-family: var(--mono); font-size: 11.5px; }
+.qtable .qid { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+.qtable .qnote { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.qtable .qadded, .qtable .btn { white-space: nowrap; }
+.p-hold { color: var(--hold); background: var(--hold-bg); }
 
 .btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 7px; padding: 6px 12px; font-weight: 650; font-size: 13px; }
@@ -270,6 +281,10 @@ body { margin: 0; }
       <div class="sec-head"><h2 id="calls-h">Needs your call</h2><p>Queued GPU jobs with no decision yet, oldest first.</p></div>
       <div class="call-list" id="calls"></div>
     </section>
+    <section class="queue" aria-labelledby="queue-h">
+      <div class="sec-head"><h2 id="queue-h">A100 queue</h2><p>From ad-train-a100/QUEUE.md · read-only · you start an item by telling the A100 agent.</p><a class="btn link" href="https://github.com/Silicon-Melter/ad-train-a100/blob/main/QUEUE.md" target="_blank" rel="noopener">Open QUEUE.md</a></div>
+      <div id="queue"></div>
+    </section>
     <div class="sec-head"><h2>Machines</h2><p>Each PC's sync service reports temperatures, jobs and whether each process is alive, every 2 minutes and right after a change.</p><span id="bump-all-slot"></span></div>
     <div class="lanes" id="lanes"></div>
   </section>
@@ -297,7 +312,7 @@ body { margin: 0; }
     set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
   };
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, jobs: [],
-    protocol: null, tab: "board", hideDone: true, busy: {}, loading: false };
+    protocol: null, tab: "board", hideDone: true, busy: {}, loading: false, queue: null, queueError: "" };
   const drafts = {}; // unsent messages, by job id, so a refresh never eats what you are typing
   let collapsed = {};
   try { collapsed = JSON.parse(store.get("gpu-board.collapsed") || "{}") || {}; } catch (e) { collapsed = {}; }
@@ -337,7 +352,7 @@ body { margin: 0; }
   function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0))); }
   function b64encode(text) { let bin = ""; new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); }
   async function gh(path, opts) {
-    const r = await fetch(API + path, Object.assign({ cache: "no-store" }, opts, {
+    const r = await fetch(/^https:/.test(path) ? path : API + path, Object.assign({ cache: "no-store" }, opts, {
       headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
     }));
     if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
@@ -355,6 +370,69 @@ body { margin: 0; }
       body: JSON.stringify({ message, content: b64encode(text), sha, branch: ref }) });
     if (r.status === 409 || r.status === 422) { const e = new Error("changed meanwhile"); e.conflict = true; throw e; }
     if (!r.ok) throw new Error("GitHub said " + r.status + " when saving");
+  }
+
+  // The A100's to-do list, shown read-only: every 30 s, one conditional request (a 304 costs nothing).
+  const QUEUE_REPO = "Silicon-Melter/ad-train-a100", QUEUE_URL = "https://api.github.com/repos/" + QUEUE_REPO + "/contents/QUEUE.md";
+  const QUEUE_BLOB = "https://github.com/" + QUEUE_REPO + "/blob/main/";
+  let queueTag = null, polls = 0;
+  async function loadQueue() {
+    try {
+      const r = await gh(QUEUE_URL, { headers: queueTag && S.queue ? { "If-None-Match": queueTag } : {} });
+      if (r.status === 304) return;
+      if (r.status === 403 || r.status === 404) { S.queue = null; S.queueError = "token"; return; }
+      if (!r.ok) throw new Error("GitHub said " + r.status);
+      S.queue = parseQueue(b64decode((await r.json()).content)); S.queueError = ""; queueTag = r.headers.get("ETag");
+    } catch (e) { if (e.auth) throw e; S.queueError = String(e.message || e); }
+  }
+  function parseQueue(md) {
+    const lines = md.split("\n");
+    const section = (name) => {
+      const i = lines.findIndex((l) => /^##\s/.test(l) && l.replace(/^##\s+/, "").trim().toLowerCase() === name);
+      const out = [];
+      for (let k = i + 1; i >= 0 && k < lines.length && !/^##\s/.test(lines[k]); k++) out.push(lines[k]);
+      return out;
+    };
+    const rows = section("queue").filter((l) => /^\s*\|/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+    const head = (rows[0] || []).map((h) => h.toLowerCase());
+    const items = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c))).map((r) => {
+      const o = {}; head.forEach((h, i) => { o[h] = r[i] || ""; }); return o;
+    });
+    const prompts = {};
+    section("start prompts").forEach((l) => {
+      const m = l.match(/^\*\*([A-Za-z0-9_-]+)\*\*:\s*(.+)$/);
+      if (m) prompts[m[1]] = m[2].trim().replace(/^"|"$/g, "").replace(/\*\*/g, "");
+    });
+    return { items, prompts };
+  }
+  const qcol = (it, prefix) => { const k = Object.keys(it).find((h) => h.startsWith(prefix)); return k ? it[k] : ""; };
+  const qstate = (it) => { const t = qcol(it, "state"); const m = t.match(/^\s*([A-Za-z]+)\s*(.*)$/); return { word: m ? m[1].toLowerCase() : "", rest: m ? m[2] : t }; };
+  function qlink(path) {  // a link inside the queue repo, or a plain https link; anything else stays text
+    const p = path.replace(/^\.\//, "");
+    return /^https:\/\//.test(p) ? p : /^[\w.\/-]+$/.test(p) ? QUEUE_BLOB + p : null;
+  }
+  function mdInline(text) {  // [text](path), `code` (file paths become links), **bold**; everything else escaped
+    let h = esc(text);
+    h = h.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, href) => { const u = qlink(href.replace(/&amp;/g, "&")); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + t + "</a>" : m; });
+    h = h.replace(/(^|[^>])`([^`]+)`/g, (m, pre, c) => { const u = /\/.*\.\w+$/.test(c) && qlink(c); return pre + (u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener"><code>' + c + "</code></a>" : "<code>" + c + "</code>"); });
+    h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
+    return h.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  }
+  const QPILL = { running: "p-running", ready: "p-queued", blocked: "p-blocked", done: "p-done", draft: "p-hold", withdrawn: "p-hold" };
+  function renderQueue() {
+    if (S.queueError === "token") return '<div class="empty">The board\'s token can\'t read <span class="mono">ad-train-a100</span> yet. Add it under Repository access in the token\'s settings (github.com/settings/personal-access-tokens), then reload.</div>';
+    if (!S.queue) return '<div class="empty">' + (S.queueError ? "Couldn\'t load the queue: " + esc(S.queueError) : "Loading the A100 queue…") + "</div>";
+    const items = S.queue.items.filter((it) => !(S.hideDone && ["done", "withdrawn"].includes(qstate(it).word)));
+    if (!items.length) return '<div class="empty">Nothing in the A100 queue' + (S.hideDone && S.queue.items.length ? " that isn\'t done" : "") + ".</div>";
+    return '<div class="qwrap"><table class="qtable"><thead><tr><th>ID</th><th>State</th><th>Task</th><th>Est. A100 h</th><th>Needs</th><th>Added</th><th>Report</th><th></th></tr></thead><tbody>' +
+      items.map((it) => {
+        const id = qcol(it, "id"), st = qstate(it), prompt = S.queue.prompts[id];
+        return "<tr><td class=\"qid\">" + esc(id) + "</td>" +
+          '<td><span class="pill ' + (QPILL[st.word] || "p-hold") + '">' + esc(st.word || "?") + "</span>" + (st.rest ? '<span class="qnote">' + mdInline(st.rest) + "</span>" : "") + "</td>" +
+          "<td>" + mdInline(qcol(it, "task")) + "</td><td>" + mdInline(qcol(it, "est")) + "</td><td>" + mdInline(qcol(it, "needs")) + "</td>" +
+          '<td class="qadded">' + esc(qcol(it, "added")) + '<span class="qnote">' + esc(qcol(it, "date")) + "</span></td><td>" + mdInline(qcol(it, "report")) + "</td>" +
+          "<td>" + (prompt ? '<button type="button" class="btn" data-act="copy-prompt" data-id="' + esc(id) + '" title="Copies the start prompt of this item; paste it to the A100 agent yourself">Copy prompt</button>' : "") + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
   }
 
   // Every 5 s: one conditional request for all board/* branch heads. GitHub answers 304 when nothing moved, and a 304
@@ -384,6 +462,7 @@ body { margin: 0; }
       S.jobs = [];
       Object.entries(S.states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => S.jobs.push(Object.assign({}, j, { id, machine: mid }))); });
       if (!S.protocol) { const p = await readFile("plugins/gpu-board/skills/gpu-board/SKILL.md", "main"); S.protocol = p ? p.text.replace(/^---[\s\S]*?---\s*/, "") : ""; }
+      if (polls++ % 6 === 0) await loadQueue();
       S.status = "ready"; S.error = "";
     } catch (e) {
       if (e.auth) { S.token = null; store.set("gpu-board.token", null); S.status = "need-token"; S.error = "GitHub rejected that token. Check it has Contents read and write on agent-board."; }
@@ -592,7 +671,8 @@ body { margin: 0; }
       ["Needs your call", calls.length, calls.length ? "hot" : ""],
       ["Needs a look", trouble.length, trouble.length ? "bad" : ""],
       ["Hottest GPU", hottest != null ? Math.round(hottest) + " °C" : "—", hh === "hot" ? "bad" : hh === "warm" ? "warn" : ""],
-      ["PCs syncing", syncing + " / " + machines().length, ""]
+      ["PCs syncing", syncing + " / " + machines().length, ""],
+      ["A100 running / ready", S.queue ? S.queue.items.filter((it) => qstate(it).word === "running").length + " / " + S.queue.items.filter((it) => qstate(it).word === "ready").length : "—", ""]
     ].map(([k, v, c]) => '<div class="stat ' + c + '"><b>' + v + "</b><span>" + k + "</span></div>").join("");
 
     $("calls").innerHTML = calls.length ? calls.map((j) => {
@@ -603,6 +683,8 @@ body { margin: 0; }
         '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button></div>" +
         "</div>";
     }).join("") : '<div class="empty">Nothing is waiting on you. A GPU job lands here when its agent queues on a busy GPU or an on-hold machine.</div>';
+
+    $("queue").innerHTML = renderQueue();
 
     const runningCount = S.jobs.filter((j) => j.state === "running").length;
     $("bump-all-slot").innerHTML = runningCount ? '<button type="button" class="btn bump" data-act="bump-all">Bump all running (' + runningCount + ")</button>" : "";
@@ -658,6 +740,13 @@ body { margin: 0; }
     const a = b.dataset.act, id = b.dataset.id;
     if (a === "collapse") { const k = b.dataset.key; if (collapsed[k]) delete collapsed[k]; else collapsed[k] = true; store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
     if (a === "collapse-all") { const m = machine(id); const close = !devicesOf(m).every((d) => collapsed[m.id + ":" + d.id]); devicesOf(m).forEach((d) => { if (close) collapsed[m.id + ":" + d.id] = true; else delete collapsed[m.id + ":" + d.id]; }); store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
+    if (a === "copy-prompt") {
+      const text = S.queue && S.queue.prompts[id];
+      if (!text) return;
+      const done = () => toast("Start prompt for " + id + " copied. Paste it to the A100 agent when you want it to run.");
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(done, () => { window.prompt("Copy the start prompt for " + id + ":", text); });
+      return;
+    }
     if (a === "go" || a === "wait") act([id], (a === "go" ? "Go ahead" : "Wait") + " for " + id, (d) => { (d.decisions = d.decisions || {})[id] = { verdict: a, at: nowIso() }; });
     else if (a === "bump") act([id], "Bumped " + id, (d) => { (d.bumps = d.bumps || {})[id] = { at: nowIso() }; });
     else if (a === "bump-all") { const ids = S.jobs.filter((j) => j.state === "running").map((j) => j.id); act(ids, "Bumped " + ids.length + " running jobs", (d) => { d.bumps = d.bumps || {}; ids.forEach((x) => { d.bumps[x] = { at: nowIso() }; }); }); }
