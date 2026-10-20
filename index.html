@@ -286,7 +286,7 @@ body { margin: 0; }
 (function () {
   const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
   const MIN = 60e3, HR = 3600e3;
-  const POLL = 30e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 5 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
+  const POLL = 5e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 2 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
   const LIVE = ["running", "paused", "queued"];
   const ORDER = { running: 0, paused: 1, blocked: 2, queued: 3, failed: 4, done: 5 };
   const LABEL = { running: "Running", queued: "Queued", paused: "Paused", blocked: "Blocked", done: "Done", failed: "Failed" };
@@ -357,18 +357,32 @@ body { margin: 0; }
     if (!r.ok) throw new Error("GitHub said " + r.status + " when saving");
   }
 
+  // Every 5 s: one conditional request for all board/* branch heads. GitHub answers 304 when nothing moved, and a 304
+  // does not count against the token's rate limit; only the files whose branch moved are downloaded.
+  let refsTag = null, heads = {};
   async function load() {
     if (!S.token || S.loading) return;
     S.loading = true;
     try {
-      const c = await readFile("control.json", "board/control");
-      if (!c) throw new Error("The board/control branch is missing in agent-board.");
-      S.control = JSON.parse(c.text);
-      const states = {};
-      await Promise.all(machines().map(async (m) => { const f = await readFile("state.json", "board/" + m.id); states[m.id] = f ? JSON.parse(f.text) : null; }));
-      S.states = states;
+      if (!S.control) { refsTag = null; heads = {}; }
+      const r = await gh("/git/matching-refs/heads/board/", { headers: refsTag ? { "If-None-Match": refsTag } : {} });
+      if (r.status !== 304) {
+        if (!r.ok) throw new Error("GitHub said " + r.status + " when listing the board branches");
+        const tag = r.headers.get("ETag"), now = {};
+        (await r.json()).forEach((x) => { now[x.ref.replace("refs/heads/", "")] = x.object.sha; });
+        if (!now["board/control"]) throw new Error("The board/control branch is missing in agent-board.");
+        if (now["board/control"] !== heads["board/control"]) S.control = JSON.parse((await readFile("control.json", now["board/control"])).text);
+        const states = {};
+        await Promise.all(machines().map(async (m) => {
+          const b = "board/" + m.id;
+          if (!now[b]) states[m.id] = null;
+          else if (now[b] === heads[b] && S.states[m.id]) states[m.id] = S.states[m.id];
+          else { const f = await readFile("state.json", now[b]); states[m.id] = f ? JSON.parse(f.text) : null; }
+        }));
+        S.states = states; heads = now; refsTag = tag;
+      }
       S.jobs = [];
-      Object.entries(states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => S.jobs.push(Object.assign({}, j, { id, machine: mid }))); });
+      Object.entries(S.states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => S.jobs.push(Object.assign({}, j, { id, machine: mid }))); });
       if (!S.protocol) { const p = await readFile("plugins/gpu-board/skills/gpu-board/SKILL.md", "main"); S.protocol = p ? p.text.replace(/^---[\s\S]*?---\s*/, "") : ""; }
       S.status = "ready"; S.error = "";
     } catch (e) {
@@ -430,7 +444,7 @@ body { margin: 0; }
     const seen = got ? ' · <span class="seen">delivered to the agent ' + ago(ms(got)) + "</span>"
       : j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>'
       : d.verdict === "go" && j.state === "running" ? " · it is running"
-      : j.reachable ? " · on its way to the agent (under a minute)" : " · the PC picks it up within a minute";
+      : j.reachable ? " · on its way to the agent (about 10 s)" : " · the PC picks it up within about 10 s";
     return '<div class="decision">' + verb + " " + ago(ms(d.at)) + seen + "</div>";
   }
 
@@ -448,14 +462,14 @@ body { margin: 0; }
     const b = bumpOf(j);
     if (b && !b.answered) out += b.late
       ? '<div class="health dead"><b>No answer</b> to the bump sent ' + ago(b.at) + ". The PC's sync service may be down.</div>"
-      : '<div class="health pending"><b>Bumped</b> ' + ago(b.at) + " · the PC answers within a minute or two</div>";
+      : '<div class="health pending"><b>Bumped</b> ' + ago(b.at) + " · the PC answers within about 15 s</div>";
     return out;
   }
 
   function reach(j) {
     if (["done", "failed"].includes(j.state) || (j.reachable == null && j.agent_alive == null)) return "";
     if (j.agent_alive === false) return '<span class="chip gone" title="The Claude session that registered this job has exited, so nothing you send reaches it. Open a session on that PC to pick the job up.">session ended</span>';
-    if (j.reachable) return '<span class="chip ok" title="The session is open and its board-inbox monitor is running: Go, Wait and messages reach it in under a minute">listening</span>';
+    if (j.reachable) return '<span class="chip ok" title="The session is open and its board-inbox monitor is running: Go, Wait and messages reach it within about 10 s">listening</span>';
     return '<span class="chip off" title="The session is open but its board-inbox monitor is not running (plugin older than 0.4.0, or monitors turned off). It sees your call at its next board-job update.">not listening</span>';
   }
 
@@ -632,7 +646,7 @@ body { margin: 0; }
 
   async function act(ids, label, mutate) {
     ids.forEach((id) => { S.busy[id] = true; }); refresh();
-    try { await saveControl(mutate, label); toast(label + ". The PC picks it up within a minute."); }
+    try { await saveControl(mutate, label); toast(label + ". The PC picks it up within about 10 s."); }
     catch (e) { toast("Couldn't save: " + (e.message || e) + "."); }
     ids.forEach((id) => { delete S.busy[id]; }); refresh();
   }
