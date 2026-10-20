@@ -177,9 +177,16 @@ button.status:hover { border-color: currentColor; }
 .health.dead q { color: var(--bad); }
 .result { font-size: 13px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 2px; }
-.paste { display: flex; gap: 6px; flex-wrap: wrap; }
-.paste input { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 12px; font-family: var(--mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
-.paste .err { color: var(--bad); font-size: 12px; width: 100%; }
+.chip.ok { border-color: var(--go); color: var(--go); }
+.chip.off { border-color: transparent; background: var(--hold-bg); color: var(--hold); }
+.chip.gone { border-color: transparent; background: var(--bad-bg); color: var(--bad); font-weight: 700; }
+.thread { display: grid; gap: 4px; font-size: 12.5px; }
+.say { padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }
+.say.me { background: var(--accent-soft); }
+.say.agent { background: var(--surface-2); border: 1px solid var(--line); }
+.say .when { display: block; color: var(--muted); font-size: 11.5px; }
+.msg { display: flex; gap: 6px; }
+.msg input { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 
 .protocol { max-width: 780px; margin-bottom: 48px; }
 .protocol .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
@@ -279,7 +286,7 @@ body { margin: 0; }
 (function () {
   const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
   const MIN = 60e3, HR = 3600e3;
-  const POLL = 30e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 5 * MIN, KEEP_CALLS = 14 * 24 * HR;
+  const POLL = 30e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 5 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
   const LIVE = ["running", "paused", "queued"];
   const ORDER = { running: 0, paused: 1, blocked: 2, queued: 3, failed: 4, done: 5 };
   const LABEL = { running: "Running", queued: "Queued", paused: "Paused", blocked: "Blocked", done: "Done", failed: "Failed" };
@@ -291,6 +298,7 @@ body { margin: 0; }
   };
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, jobs: [],
     protocol: null, tab: "board", hideDone: true, busy: {}, loading: false };
+  const drafts = {}; // unsent messages, by job id, so a refresh never eats what you are typing
   let collapsed = {};
   try { collapsed = JSON.parse(store.get("gpu-board.collapsed") || "{}") || {}; } catch (e) { collapsed = {}; }
 
@@ -303,6 +311,7 @@ body { margin: 0; }
   const job = (id) => S.jobs.find((j) => j.id === id);
   const decisions = () => (S.control && S.control.decisions) || {};
   const bumps = () => (S.control && S.control.bumps) || {};
+  const messages = () => (S.control && S.control.messages) || {};
   const devicesOf = (m) => (m && Array.isArray(m.devices) ? m.devices : []);
   const device = (m, res) => devicesOf(m).find((d) => d.id === res) || { id: res, label: res || "?", kind: res === "cpu" ? "cpu" : "gpu" };
   const isGpu = (j) => device(machine(j.machine), j.res).kind === "gpu";
@@ -378,6 +387,7 @@ body { margin: 0; }
       mutate(data);
       const cutoff = Date.now() - KEEP_CALLS;
       ["decisions", "bumps"].forEach((k) => { Object.keys(data[k] || {}).forEach((id) => { if (ms(data[k][id].at) < cutoff) delete data[k][id]; }); });
+      Object.keys(data.messages || {}).forEach((id) => { const kept = data.messages[id].filter((m) => ms(m.at) >= cutoff); if (kept.length) data.messages[id] = kept; else delete data.messages[id]; });
       try { await writeFile("control.json", "board/control", JSON.stringify(data, null, 1) + "\n", c.sha, message); S.control = data; return; }
       catch (e) { if (!e.conflict || attempt) throw e; }
     }
@@ -416,7 +426,11 @@ body { margin: 0; }
     const d = decisions()[j.id];
     if (!d) return j.auto && j.state !== "queued" && j.state !== "done" ? '<div class="decision">Started on its own: ' + (isGpu(j) ? "the GPU was free." : "CPU and background tasks don't wait.") + "</div>" : "";
     const verb = d.verdict === "go" ? '<b class="go">Go ahead</b>' : '<b class="wait">Wait</b>';
-    const seen = j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>' : " · the PC picks it up within a minute";
+    const got = j.delivered && j.delivered["d:" + d.verdict + ":" + d.at];
+    const seen = got ? ' · <span class="seen">delivered to the agent ' + ago(ms(got)) + "</span>"
+      : j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>'
+      : d.verdict === "go" && j.state === "running" ? " · it is running"
+      : j.reachable ? " · on its way to the agent (under a minute)" : " · the PC picks it up within a minute";
     return '<div class="decision">' + verb + " " + ago(ms(d.at)) + seen + "</div>";
   }
 
@@ -438,6 +452,22 @@ body { margin: 0; }
     return out;
   }
 
+  function reach(j) {
+    if (["done", "failed"].includes(j.state) || (j.reachable == null && j.agent_alive == null)) return "";
+    if (j.agent_alive === false) return '<span class="chip gone" title="The Claude session that registered this job has exited, so nothing you send reaches it. Open a session on that PC to pick the job up.">session ended</span>';
+    if (j.reachable) return '<span class="chip ok" title="The session is open and its board-inbox monitor is running: Go, Wait and messages reach it in under a minute">listening</span>';
+    return '<span class="chip off" title="The session is open but its board-inbox monitor is not running (plugin older than 0.4.0, or monitors turned off). It sees your call at its next board-job update.">not listening</span>';
+  }
+
+  function thread(j) {
+    const mine = (messages()[j.id] || []).map((m) => ({ at: ms(m.at), me: true, text: m.text, got: j.delivered && j.delivered["m:" + m.at] }));
+    const theirs = (j.notes || []).map((n) => ({ at: ms(n.at), me: false, text: n.text }));
+    const all = mine.concat(theirs).sort((a, b) => a.at - b.at).slice(-4);
+    if (!all.length) return "";
+    return '<div class="thread">' + all.map((x) => '<div class="say ' + (x.me ? "me" : "agent") + '"><b>' + (x.me ? "You" : "Agent") + "</b> " + esc(x.text) +
+      '<span class="when">' + ago(x.at) + (x.me ? (x.got ? " · delivered" : " · not delivered yet") : "") + "</span></div>").join("") + "</div>";
+  }
+
   function jobCard(j) {
     const m = machine(j.machine);
     const busy = S.busy[j.id];
@@ -445,6 +475,7 @@ body { margin: 0; }
       j.bg ? '<span class="chip">background</span>' : "",
       j.auto ? '<span class="chip" title="Started without a go-ahead">auto</span>' : "",
       acctChip(j),
+      reach(j),
       isStale(j) ? '<span class="chip stale" title="Running with no update from the agent for over 2 hours">stale</span>' : ""
     ].join("");
     const pct = Math.max(0, Math.min(100, Number(j.pct) || 0));
@@ -466,14 +497,17 @@ body { margin: 0; }
     }
     const url = sessionUrl(j.session);
     if (url) actions += '<a class="btn link" href="' + esc(url) + '" target="_blank" rel="noopener">Open session</a>';
+    const msgForm = j.state === "done" || j.state === "failed" ? "" :
+      '<form class="msg" data-id="' + esc(j.id) + '"><input data-act="msg" data-id="' + esc(j.id) + '" maxlength="' + MSG_MAX + '" autocomplete="off" placeholder="Message the agent on this job" aria-label="Message the agent on ' + esc(j.id) + '" value="' + esc(drafts[j.id] || "") + '">' +
+      '<button type="submit" class="btn"' + (busy ? " disabled" : "") + ">Send</button></form>";
     const state = LABEL[j.state] ? j.state : "queued";
     return '<div class="job" data-state="' + state + '" data-id="' + esc(j.id) + '">' +
       '<div class="row1"><span class="pill p-' + state + '">' + (LABEL[j.state] || esc(j.state || "?")) + "</span>" + chips + '<span class="ago" title="Last update from the agent">' + ago(ms(j.updated)) + "</span></div>" +
       '<div class="task">' + esc(j.task || j.id) + "</div>" +
       '<div class="meta mono">' + esc(j.repo || "") + " · " + esc(j.id) + "</div>" +
       (showProg ? '<div class="prog">' + (j.state !== "done" && j.state !== "failed" ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : "") + '<div class="prog-text">' + progText + "</div></div>" : plan) +
-      healthLine(j) + decisionLine(j) +
-      (actions ? '<div class="actions">' + actions + "</div>" : "") +
+      healthLine(j) + decisionLine(j) + thread(j) +
+      (actions ? '<div class="actions">' + actions + "</div>" : "") + msgForm +
       "</div>";
   }
 
@@ -550,7 +584,7 @@ body { margin: 0; }
     $("calls").innerHTML = calls.length ? calls.map((j) => {
       const m = machine(j.machine), held = !m || m.status === "on_hold", d = device(m, j.res);
       return '<div class="call' + (held ? " blocked-hold" : "") + '">' +
-        '<div class="call-main"><div class="row1"><span class="pill p-queued">Queued</span>' + acctChip(j) + '<span class="mono">' + esc(m ? m.name : j.machine) + " · " + esc(d.label) + '</span><span class="ago">waiting ' + ago(ms(j.created)).replace(" ago", "") + "</span></div>" +
+        '<div class="call-main"><div class="row1"><span class="pill p-queued">Queued</span>' + acctChip(j) + reach(j) + '<span class="mono">' + esc(m ? m.name : j.machine) + " · " + esc(d.label) + '</span><span class="ago">waiting ' + ago(ms(j.created)).replace(" ago", "") + "</span></div>" +
         '<div class="call-task">' + esc(j.task || j.id) + '</div><div class="call-why">' + why(j) + " · ≈ " + esc(j.vram_gb ?? "?") + " GB, ≈ " + esc(j.est_hours ?? "?") + " h</div></div>" +
         '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button></div>" +
         "</div>";
@@ -586,7 +620,11 @@ body { margin: 0; }
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 5000);
   }
   function keyOf(el) { return el && el.dataset ? (el.dataset.act || el.dataset.tab || "") + "|" + (el.dataset.id || el.dataset.key || "") : ""; }
+  let deferred = false;
+  const typing = () => { const a = document.activeElement; return !!(a && a.matches && a.matches('input[data-act="msg"]')); };
   function refresh() {
+    if (typing()) { deferred = true; return; } // re-rendering would drop the cursor; catch up when the box loses focus
+    deferred = false;
     const k = keyOf(document.activeElement);
     render();
     if (k !== "|") { const el = [...document.querySelectorAll("button")].find((b) => keyOf(b) === k); if (el) el.focus({ preventScroll: true }); }
@@ -610,6 +648,17 @@ body { margin: 0; }
     else if (a === "bump") act([id], "Bumped " + id, (d) => { (d.bumps = d.bumps || {})[id] = { at: nowIso() }; });
     else if (a === "bump-all") { const ids = S.jobs.filter((j) => j.state === "running").map((j) => j.id); act(ids, "Bumped " + ids.length + " running jobs", (d) => { d.bumps = d.bumps || {}; ids.forEach((x) => { d.bumps[x] = { at: nowIso() }; }); }); }
     else if (a === "toggle") { const m = machine(id); const status = m.status === "available" ? "on_hold" : "available"; act([], (m.name || id) + (status === "available" ? " is available" : " is on hold"), (d) => { (d.machines || []).forEach((x) => { if (x.id === id) x.status = status; }); }); }
+  });
+  document.addEventListener("input", (e) => { const t = e.target; if (t.matches && t.matches('input[data-act="msg"]')) drafts[t.dataset.id] = t.value; });
+  document.addEventListener("focusout", () => { setTimeout(() => { if (deferred && !typing()) refresh(); }, 0); });
+  document.addEventListener("submit", (e) => {
+    const f = e.target.closest && e.target.closest("form.msg"); if (!f) return;
+    e.preventDefault();
+    const id = f.dataset.id, text = String(drafts[id] || "").replace(/\s+/g, " ").trim().slice(0, MSG_MAX);
+    if (!text) return;
+    delete drafts[id];
+    if (document.activeElement) document.activeElement.blur();
+    act([id], "Message to " + id, (d) => { const m = (d.messages = d.messages || {}); m[id] = (m[id] || []).concat({ at: nowIso(), text }).slice(-20); });
   });
   $("token-form").addEventListener("submit", (e) => {
     e.preventDefault();
