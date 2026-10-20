@@ -263,7 +263,7 @@ body { margin: 0; }
       <p>The board reads and writes the private repo <span class="mono">Silicon-Melter/agent-board</span> with a GitHub token that stays in this browser.</p>
       <ol>
         <li>On GitHub, open Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
-        <li>Repository access: <b>Only select repositories</b> → <span class="mono">agent-board</span>.</li>
+        <li>Repository access: <b>Only select repositories</b> → <span class="mono">agent-board</span> and <span class="mono">ad-train-a100</span> (the page only reads its A100 queue).</li>
         <li>Permissions → Repository permissions → <b>Contents: Read and write</b>. Nothing else.</li>
       </ol>
       <form class="row" id="token-form">
@@ -327,6 +327,10 @@ body { margin: 0; }
   const decisions = () => (S.control && S.control.decisions) || {};
   const bumps = () => (S.control && S.control.bumps) || {};
   const messages = () => (S.control && S.control.messages) || {};
+  // Calls and messages carry the run they were sent to (the job's `created`), so one left from an earlier run under the
+  // same job id never applies to a new run. Untagged ones predate the tag and still count.
+  const ofRun = (x, j) => !!x && (x.for == null || x.for === j.created);
+  const decisionOf = (j) => (ofRun(decisions()[j.id], j) ? decisions()[j.id] : null);
   const devicesOf = (m) => (m && Array.isArray(m.devices) ? m.devices : []);
   const device = (m, res) => devicesOf(m).find((d) => d.id === res) || { id: res, label: res || "?", kind: res === "cpu" ? "cpu" : "gpu" };
   const isGpu = (j) => device(machine(j.machine), j.res).kind === "gpu";
@@ -493,7 +497,7 @@ body { margin: 0; }
     const age = Date.now() - ms(st.at);
     return { st, age, silent: age > SYNC_SILENT };
   }
-  function needsCall(j) { return j.state === "queued" && !decisions()[j.id]; }
+  function needsCall(j) { return j.state === "queued" && !decisionOf(j); }
   function bumpOf(j) {
     const b = bumps()[j.id]; if (!b) return null;
     const t = machineTel(j.machine);
@@ -516,13 +520,14 @@ body { margin: 0; }
 
   // ---- rendering ----------------------------------------------------------------------------------------------
   function decisionLine(j) {
-    const d = decisions()[j.id];
+    const d = decisionOf(j);
     if (!d) return j.auto && j.state !== "queued" && j.state !== "done" ? '<div class="decision">Started on its own: ' + (isGpu(j) ? "the GPU was free." : "CPU and background tasks don't wait.") + "</div>" : "";
     const verb = d.verdict === "go" ? '<b class="go">Go ahead</b>' : '<b class="wait">Wait</b>';
     const got = j.delivered && j.delivered["d:" + d.verdict + ":" + d.at];
     const seen = got ? ' · <span class="seen">delivered to the agent ' + ago(ms(got)) + "</span>"
       : j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>'
       : d.verdict === "go" && j.state === "running" ? " · it is running"
+      : d.verdict === "wait" && j.state === "queued" ? " · it stays queued until you press Go ahead"
       : j.reachable ? " · on its way to the agent (about 10 s)" : " · the PC picks it up within about 10 s";
     return '<div class="decision">' + verb + " " + ago(ms(d.at)) + seen + "</div>";
   }
@@ -553,7 +558,7 @@ body { margin: 0; }
   }
 
   function thread(j) {
-    const mine = (messages()[j.id] || []).map((m) => ({ at: ms(m.at), me: true, text: m.text, got: j.delivered && j.delivered["m:" + m.at] }));
+    const mine = (messages()[j.id] || []).filter((m) => ofRun(m, j)).map((m) => ({ at: ms(m.at), me: true, text: m.text, got: j.delivered && j.delivered["m:" + m.at] }));
     const theirs = (j.notes || []).map((n) => ({ at: ms(n.at), me: false, text: n.text }));
     const all = mine.concat(theirs).sort((a, b) => a.at - b.at).slice(-4);
     if (!all.length) return "";
@@ -579,7 +584,7 @@ body { margin: 0; }
     const plan = j.state === "queued" ? '<div class="prog-text">Needs ≈ ' + esc(j.vram_gb ?? "?") + " GB VRAM for ≈ " + esc(j.est_hours ?? "?") + " h</div>" : "";
     let actions = "";
     if (j.state !== "done" && j.state !== "failed") {
-      const dec = decisions()[j.id], b = bumpOf(j);
+      const dec = decisionOf(j), b = bumpOf(j);
       const dis = (x) => (busy || x ? " disabled" : "");
       if (["running", "paused", "blocked"].includes(j.state))
         actions += '<button type="button" class="btn bump" data-act="bump" data-id="' + esc(j.id) + '"' + dis(b && !b.answered && !b.late) + ' title="Ask the PC for fresh readings, liveness and the last log line now">Bump</button>';
@@ -652,7 +657,7 @@ body { margin: 0; }
     $("token-err").hidden = !(S.status === "need-token" && S.error);
     $("token-err").textContent = S.status === "need-token" ? S.error : "";
 
-    const notice = !connected ? "" : S.status === "loading" ? "Loading the board…" : S.error ? esc(S.error) + " Retrying every 30 s." : "";
+    const notice = !connected ? "" : S.status === "loading" ? "Loading the board…" : S.error ? esc(S.error) + " Retrying every 5 s." : "";
     $("notice").hidden = !notice;
     $("notice-text").innerHTML = notice;
     $("protocol-text").textContent = S.protocol == null ? "Loading…" : S.protocol || "The protocol file is missing.";
@@ -747,7 +752,7 @@ body { margin: 0; }
       (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(done, () => { window.prompt("Copy the start prompt for " + id + ":", text); });
       return;
     }
-    if (a === "go" || a === "wait") act([id], (a === "go" ? "Go ahead" : "Wait") + " for " + id, (d) => { (d.decisions = d.decisions || {})[id] = { verdict: a, at: nowIso() }; });
+    if (a === "go" || a === "wait") act([id], (a === "go" ? "Go ahead" : "Wait") + " for " + id, (d) => { (d.decisions = d.decisions || {})[id] = { verdict: a, at: nowIso(), for: (job(id) || {}).created }; });
     else if (a === "bump") act([id], "Bumped " + id, (d) => { (d.bumps = d.bumps || {})[id] = { at: nowIso() }; });
     else if (a === "bump-all") { const ids = S.jobs.filter((j) => j.state === "running").map((j) => j.id); act(ids, "Bumped " + ids.length + " running jobs", (d) => { d.bumps = d.bumps || {}; ids.forEach((x) => { d.bumps[x] = { at: nowIso() }; }); }); }
     else if (a === "toggle") { const m = machine(id); const status = m.status === "available" ? "on_hold" : "available"; act([], (m.name || id) + (status === "available" ? " is available" : " is on hold"), (d) => { (d.machines || []).forEach((x) => { if (x.id === id) x.status = status; }); }); }
@@ -761,7 +766,7 @@ body { margin: 0; }
     if (!text) return;
     delete drafts[id];
     if (document.activeElement) document.activeElement.blur();
-    act([id], "Message to " + id, (d) => { const m = (d.messages = d.messages || {}); m[id] = (m[id] || []).concat({ at: nowIso(), text }).slice(-20); });
+    act([id], "Message to " + id, (d) => { const m = (d.messages = d.messages || {}); m[id] = (m[id] || []).concat({ at: nowIso(), text, for: (job(id) || {}).created }).slice(-20); });
   });
   $("token-form").addEventListener("submit", (e) => {
     e.preventDefault();
