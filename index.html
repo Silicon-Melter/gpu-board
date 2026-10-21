@@ -301,6 +301,7 @@ body { margin: 0; }
 (function () {
   const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
   const MIN = 60e3, HR = 3600e3;
+  const AUTO_MAX_H = 4; // board-sync starts a queued GPU job this long or shorter on its own when its GPU frees up
   const POLL = 5e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 2 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
   const LIVE = ["running", "paused", "queued"];
   const ORDER = { running: 0, paused: 1, blocked: 2, queued: 3, failed: 4, done: 5 };
@@ -327,6 +328,7 @@ body { margin: 0; }
   const decisions = () => (S.control && S.control.decisions) || {};
   const bumps = () => (S.control && S.control.bumps) || {};
   const messages = () => (S.control && S.control.messages) || {};
+  const cleared = () => (S.control && S.control.cleared) || {};
   // Calls and messages carry the run they were sent to (the job's `created`), so one left from an earlier run under the
   // same job id never applies to a new run. Untagged ones predate the tag and still count.
   const ofRun = (x, j) => !!x && (x.for == null || x.for === j.created);
@@ -463,8 +465,7 @@ body { margin: 0; }
         }));
         S.states = states; heads = now; refsTag = tag;
       }
-      S.jobs = [];
-      Object.entries(S.states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => S.jobs.push(Object.assign({}, j, { id, machine: mid }))); });
+      collectJobs();
       if (!S.protocol) { const p = await readFile("plugins/gpu-board/skills/gpu-board/SKILL.md", "main"); S.protocol = p ? p.text.replace(/^---[\s\S]*?---\s*/, "") : ""; }
       if (polls++ % 6 === 0) await loadQueue();
       S.status = "ready"; S.error = "";
@@ -476,6 +477,14 @@ body { margin: 0; }
     refresh();
   }
 
+  // Every job the PCs report, minus runs the owner cleared (the PC deletes those within seconds; hide them at once).
+  function collectJobs() {
+    S.jobs = [];
+    Object.entries(S.states).forEach(([mid, st]) => { if (st && st.jobs) Object.entries(st.jobs).forEach(([id, j]) => {
+      if (!(cleared()[id] && cleared()[id].for === j.created)) S.jobs.push(Object.assign({}, j, { id, machine: mid }));
+    }); });
+  }
+
   // Read-modify-write control.json; retry once if someone saved in between.
   async function saveControl(mutate, message) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -483,9 +492,9 @@ body { margin: 0; }
       const data = JSON.parse(c.text);
       mutate(data);
       const cutoff = Date.now() - KEEP_CALLS;
-      ["decisions", "bumps"].forEach((k) => { Object.keys(data[k] || {}).forEach((id) => { if (ms(data[k][id].at) < cutoff) delete data[k][id]; }); });
+      ["decisions", "bumps", "cleared"].forEach((k) => { Object.keys(data[k] || {}).forEach((id) => { if (ms(data[k][id].at) < cutoff) delete data[k][id]; }); });
       Object.keys(data.messages || {}).forEach((id) => { const kept = data.messages[id].filter((m) => ms(m.at) >= cutoff); if (kept.length) data.messages[id] = kept; else delete data.messages[id]; });
-      try { await writeFile("control.json", "board/control", JSON.stringify(data, null, 1) + "\n", c.sha, message); S.control = data; return; }
+      try { await writeFile("control.json", "board/control", JSON.stringify(data, null, 1) + "\n", c.sha, message); S.control = data; collectJobs(); return; }
       catch (e) { if (!e.conflict || attempt) throw e; }
     }
   }
@@ -497,7 +506,7 @@ body { margin: 0; }
     const age = Date.now() - ms(st.at);
     return { st, age, silent: age > SYNC_SILENT };
   }
-  function needsCall(j) { return j.state === "queued" && !decisionOf(j); }
+  function needsCall(j) { return j.state === "queued" && !decisionOf(j) && !j.auto_go; }
   function bumpOf(j) {
     const b = bumps()[j.id]; if (!b) return null;
     const t = machineTel(j.machine);
@@ -505,6 +514,9 @@ body { margin: 0; }
     return { at: ms(b.at), answered, late: !answered && Date.now() - ms(b.at) > BUMP_LATE };
   }
   function processGone(j) { return j.alive === false && ["running", "paused", "blocked"].includes(j.state); }
+  // Clear is offered only on dead jobs: the process is gone, or the session ended with no live process left.
+  function canClear(j) { return !["done", "failed"].includes(j.state) && (processGone(j) || (j.agent_alive === false && j.alive !== true)); }
+  const clearBtn = (j) => canClear(j) ? '<button type="button" class="btn" data-act="clear" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ' title="Remove this dead job from the PC and the board, so its GPU is free again">Clear</button>' : "";
   function needsLook(j) { const b = bumpOf(j); return isStale(j) || (b && b.late) || j.state === "blocked" || processGone(j); }
 
   function why(j) {
@@ -520,16 +532,16 @@ body { margin: 0; }
 
   // ---- rendering ----------------------------------------------------------------------------------------------
   function decisionLine(j) {
-    const d = decisionOf(j);
+    const d = decisionOf(j) || (j.auto_go ? { verdict: "go", at: j.auto_go, auto: true } : null);
     if (!d) return j.auto && j.state !== "queued" && j.state !== "done" ? '<div class="decision">Started on its own: ' + (isGpu(j) ? "the GPU was free." : "CPU and background tasks don't wait.") + "</div>" : "";
-    const verb = d.verdict === "go" ? '<b class="go">Go ahead</b>' : '<b class="wait">Wait</b>';
+    const verb = d.auto ? '<b class="go">Started on its own</b>' : d.verdict === "go" ? '<b class="go">Go ahead</b>' : '<b class="wait">Wait</b>';
     const got = j.delivered && j.delivered["d:" + d.verdict + ":" + d.at];
     const seen = got ? ' · <span class="seen">delivered to the agent ' + ago(ms(got)) + "</span>"
       : j.seen && j.seen.verdict === d.verdict && j.seen.at === d.at ? ' · <span class="seen">the agent has seen it</span>'
       : d.verdict === "go" && j.state === "running" ? " · it is running"
       : d.verdict === "wait" && j.state === "queued" ? " · it stays queued until you press Go ahead"
       : j.reachable ? " · on its way to the agent (about 10 s)" : " · the PC picks it up within about 10 s";
-    return '<div class="decision">' + verb + " " + ago(ms(d.at)) + seen + "</div>";
+    return '<div class="decision">' + verb + " " + ago(ms(d.at)) + (d.auto ? " (its GPU freed up and it was next)" : "") + seen + "</div>";
   }
 
   function healthLine(j) {
@@ -592,6 +604,7 @@ body { margin: 0; }
         actions += '<button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + dis(!m || m.status === "on_hold") + ">Go ahead</button>";
       if (j.state !== "blocked")
         actions += '<button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + dis(dec && dec.verdict === "wait" && j.state !== "running") + ">Wait</button>";
+      actions += clearBtn(j);
     }
     const url = sessionUrl(j.session);
     if (url) actions += '<a class="btn link" href="' + esc(url) + '" target="_blank" rel="noopener">Open session</a>';
@@ -684,8 +697,9 @@ body { margin: 0; }
       const m = machine(j.machine), held = !m || m.status === "on_hold", d = device(m, j.res);
       return '<div class="call' + (held ? " blocked-hold" : "") + '">' +
         '<div class="call-main"><div class="row1"><span class="pill p-queued">Queued</span>' + acctChip(j) + reach(j) + '<span class="mono">' + esc(m ? m.name : j.machine) + " · " + esc(d.label) + '</span><span class="ago">waiting ' + ago(ms(j.created)).replace(" ago", "") + "</span></div>" +
-        '<div class="call-task">' + esc(j.task || j.id) + '</div><div class="call-why">' + why(j) + " · ≈ " + esc(j.vram_gb ?? "?") + " GB, ≈ " + esc(j.est_hours ?? "?") + " h</div></div>" +
-        '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button></div>" +
+        '<div class="call-task">' + esc(j.task || j.id) + '</div><div class="call-why">' + why(j) + " · ≈ " + esc(j.vram_gb ?? "?") + " GB, ≈ " + esc(j.est_hours ?? "?") + " h" +
+          (j.agent_alive === false ? " · <b>Its session has ended</b>, so it won't start" : j.est_hours > AUTO_MAX_H ? " · <b>Over " + AUTO_MAX_H + " h</b>, so it waits for your Go ahead" : "") + "</div></div>" +
+        '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button>" + clearBtn(j) + "</div>" +
         "</div>";
     }).join("") : '<div class="empty">Nothing is waiting on you. A GPU job lands here when its agent queues on a busy GPU or an on-hold machine.</div>';
 
@@ -755,6 +769,11 @@ body { margin: 0; }
     if (a === "go" || a === "wait") act([id], (a === "go" ? "Go ahead" : "Wait") + " for " + id, (d) => { (d.decisions = d.decisions || {})[id] = { verdict: a, at: nowIso(), for: (job(id) || {}).created }; });
     else if (a === "bump") act([id], "Bumped " + id, (d) => { (d.bumps = d.bumps || {})[id] = { at: nowIso() }; });
     else if (a === "bump-all") { const ids = S.jobs.filter((j) => j.state === "running").map((j) => j.id); act(ids, "Bumped " + ids.length + " running jobs", (d) => { d.bumps = d.bumps || {}; ids.forEach((x) => { d.bumps[x] = { at: nowIso() }; }); }); }
+    else if (a === "clear") {
+      const j = job(id);
+      if (!j || !window.confirm("Clear \u201c" + (j.task || id) + "\u201d from the board?\n\nOnly if nothing of this job still runs: the PC deletes the job, and its GPU can start the next queued job.")) return;
+      act([id], "Cleared " + id, (d) => { (d.cleared = d.cleared || {})[id] = { at: nowIso(), for: j.created }; });
+    }
     else if (a === "toggle") { const m = machine(id); const status = m.status === "available" ? "on_hold" : "available"; act([], (m.name || id) + (status === "available" ? " is available" : " is on hold"), (d) => { (d.machines || []).forEach((x) => { if (x.id === id) x.status = status; }); }); }
   });
   document.addEventListener("input", (e) => { const t = e.target; if (t.matches && t.matches('input[data-act="msg"]')) drafts[t.dataset.id] = t.value; });
