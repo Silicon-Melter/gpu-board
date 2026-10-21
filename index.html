@@ -301,7 +301,6 @@ body { margin: 0; }
 (function () {
   const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
   const MIN = 60e3, HR = 3600e3;
-  const AUTO_MAX_H = 4; // board-sync starts a queued GPU job this long or shorter on its own when its GPU frees up
   const POLL = 5e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 2 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
   const LIVE = ["running", "paused", "queued"];
   const ORDER = { running: 0, paused: 1, blocked: 2, queued: 3, failed: 4, done: 5 };
@@ -698,7 +697,7 @@ body { margin: 0; }
       return '<div class="call' + (held ? " blocked-hold" : "") + '">' +
         '<div class="call-main"><div class="row1"><span class="pill p-queued">Queued</span>' + acctChip(j) + reach(j) + '<span class="mono">' + esc(m ? m.name : j.machine) + " · " + esc(d.label) + '</span><span class="ago">waiting ' + ago(ms(j.created)).replace(" ago", "") + "</span></div>" +
         '<div class="call-task">' + esc(j.task || j.id) + '</div><div class="call-why">' + why(j) + " · ≈ " + esc(j.vram_gb ?? "?") + " GB, ≈ " + esc(j.est_hours ?? "?") + " h" +
-          (j.agent_alive === false ? " · <b>Its session has ended</b>, so it won't start" : j.est_hours > AUTO_MAX_H ? " · <b>Over " + AUTO_MAX_H + " h</b>, so it waits for your Go ahead" : "") + "</div></div>" +
+          (j.agent_alive === false ? " · <b>Its session has ended</b>, so it won't start" : "") + "</div></div>" +
         '<div class="btns"><button type="button" class="btn go" data-act="go" data-id="' + esc(j.id) + '"' + (held || S.busy[j.id] ? " disabled" : "") + '>Go ahead</button><button type="button" class="btn wait" data-act="wait" data-id="' + esc(j.id) + '"' + (S.busy[j.id] ? " disabled" : "") + ">Wait</button>" + clearBtn(j) + "</div>" +
         "</div>";
     }).join("") : '<div class="empty">Nothing is waiting on you. A GPU job lands here when its agent queues on a busy GPU or an on-hold machine.</div>';
