@@ -552,7 +552,7 @@ body { margin: 0; }
     const what = w.pid ? "pid " + w.pid : w.unit ? "unit " + w.unit : "";
     const detail = (what ? " · " + esc(what) : "") + (j.last ? " · last log <q>" + esc(j.last) + "</q>" : "") + (t ? " · checked " + ago(ms(t.st.at)) : "");
     if (t && t.silent) out += '<div class="health dead"><b>Can\'t confirm</b>: this PC\'s sync has been silent since ' + ago(ms(t.st.at)) + ".</div>";
-    else if (j.alive === false) out += '<div class="health dead"><b>Process gone</b>' + detail + "</div>";
+    else if (j.alive === false) out += '<div class="health dead"><b>Process gone</b>' + detail + (j.delivered && j.delivered["p:" + w.pid] ? " · the agent was told " + ago(ms(j.delivered["p:" + w.pid])) : "") + "</div>";
     else if (j.alive === true) out += '<div class="health ok"><b>Alive</b>' + detail + "</div>";
     else if (j.state === "running") out += '<div class="health">No process handed to the sync service yet (<span class="mono">board-job watch</span>).</div>';
     const b = bumpOf(j);
