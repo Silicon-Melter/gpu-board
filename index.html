@@ -251,7 +251,7 @@ body { margin: 0; }
         <button type="button" data-tab="protocol" aria-pressed="false">Agent protocol</button>
       </div>
       <label class="check"><input type="checkbox" id="hide-done" checked> Hide done</label>
-      <button type="button" class="btn link" id="forget" hidden>Forget token</button>
+      <button type="button" class="btn link" id="forget" hidden>Sign out</button>
     </div>
   </div>
 </header>
@@ -260,7 +260,13 @@ body { margin: 0; }
   <section id="setup" class="setup" hidden>
     <div class="sec-head"><h2>Connect the board</h2></div>
     <div class="card">
-      <p>The board reads and writes the private repo <span class="mono">Silicon-Melter/agent-board</span> with a GitHub token that stays in this browser.</p>
+      <p>The board reads and writes the private repo <span class="mono">Silicon-Melter/agent-board</span> (and reads the A100 queue in <span class="mono">ad-train-a100</span>) as you. Two ways in:</p>
+      <div id="signin-box" class="row">
+        <button type="button" class="btn go" id="signin">Sign in with GitHub</button>
+        <p class="fine">Through the board's GitHub App, which can reach only those two repos. It stays signed in on this browser and renews itself.</p>
+      </div>
+      <p class="fine" id="signin-off">"Sign in with GitHub" is not set up yet (agent-board README, "Sign in with GitHub"). Paste a token meanwhile.</p>
+      <p><b>Or paste a token</b></p>
       <ol>
         <li>On GitHub, open Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
         <li>Repository access: <b>Only select repositories</b> → <span class="mono">agent-board</span> and <span class="mono">ad-train-a100</span> (the page only reads its A100 queue).</li>
@@ -271,7 +277,7 @@ body { margin: 0; }
         <button type="submit" class="btn go">Connect</button>
       </form>
       <div class="err" id="token-err" hidden></div>
-      <p class="fine">Saved in this browser's storage for this site only. Use "Forget token" on a shared computer.</p>
+      <p class="fine">Saved in this browser's storage for this site only. Use "Sign out" on a shared computer.</p>
     </div>
   </section>
 
@@ -300,6 +306,10 @@ body { margin: 0; }
 <script>
 (function () {
   const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
+  // "Sign in with GitHub" (README): the board GitHub App's Client ID and the sign-in relay (web/signin-worker.js on
+  // Cloudflare). Both are public; the App's secret lives only in the relay. Empty: only the pasted token is offered.
+  const SIGNIN = { clientId: "", worker: "" };
+  const PAGE_URL = "https://silicon-melter.github.io/gpu-board/";
   const MIN = 60e3, HR = 3600e3;
   const POLL = 5e3, SYNC_SILENT = 6 * MIN, BUMP_LATE = 2 * MIN, KEEP_CALLS = 14 * 24 * HR, MSG_MAX = 500;
   const LIVE = ["running", "paused", "queued"];
@@ -311,6 +321,8 @@ body { margin: 0; }
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
   };
+  let auth = null; // a signed-in token's refresh token and expiry; null for a pasted token
+  try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, jobs: [],
     protocol: null, tab: "board", hideDone: true, busy: {}, loading: false, queue: null, queueError: "" };
   const drafts = {}; // unsent messages, by job id, so a refresh never eats what you are typing
@@ -356,12 +368,27 @@ body { margin: 0; }
   // ---- GitHub ------------------------------------------------------------------------------------------------
   function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0))); }
   function b64encode(text) { let bin = ""; new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); }
+  // The relay swaps GitHub's sign-in code, or later the refresh token, for a token pair (signed-in tokens last 8 h).
+  async function relay(body) {
+    const r = await fetch(SIGNIN.worker, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.access_token) throw new Error(j.error_description || j.error || "the sign-in relay said " + r.status);
+    S.token = j.access_token;
+    auth = j.refresh_token ? { refresh: j.refresh_token, exp: j.expires_in ? Date.now() + j.expires_in * 1000 : null } : null;
+    store.set("gpu-board.token", S.token); store.set("gpu-board.auth", auth && JSON.stringify(auth));
+  }
+  let renewing = null;
+  const renew = () => (renewing = renewing || relay({ refresh_token: auth.refresh }).finally(() => { renewing = null; }));
   async function gh(path, opts) {
-    const r = await fetch(/^https:/.test(path) ? path : API + path, Object.assign({ cache: "no-store" }, opts, {
-      headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
-    }));
-    if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
-    return r;
+    if (auth && auth.exp && Date.now() > auth.exp - MIN) await renew().catch(() => {});
+    for (let tries = 0; ; tries++) {
+      const r = await fetch(/^https:/.test(path) ? path : API + path, Object.assign({ cache: "no-store" }, opts, {
+        headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
+      }));
+      if (r.status === 401 && auth && !tries && await renew().then(() => true, () => false)) continue;
+      if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
+      return r;
+    }
   }
   async function readFile(path, ref) {
     const r = await gh("/contents/" + path + "?ref=" + encodeURIComponent(ref));
@@ -425,7 +452,7 @@ body { margin: 0; }
   }
   const QPILL = { running: "p-running", ready: "p-queued", blocked: "p-blocked", done: "p-done", draft: "p-hold", withdrawn: "p-hold" };
   function renderQueue() {
-    if (S.queueError === "token") return '<div class="empty">The board\'s token can\'t read <span class="mono">ad-train-a100</span> yet. Add it under Repository access in the token\'s settings (github.com/settings/personal-access-tokens), then reload.</div>';
+    if (S.queueError === "token") return '<div class="empty">The board can\'t read <span class="mono">ad-train-a100</span> yet. Add it under Repository access in your token\'s settings (github.com/settings/personal-access-tokens), or, if you signed in with GitHub, to the board App\'s installation (github.com/settings/installations), then reload.</div>';
     if (!S.queue) return '<div class="empty">' + (S.queueError ? "Couldn\'t load the queue: " + esc(S.queueError) : "Loading the A100 queue…") + "</div>";
     const items = S.queue.items.filter((it) => !(S.hideDone && ["done", "withdrawn"].includes(qstate(it).word)));
     if (!items.length) return '<div class="empty">Nothing in the A100 queue' + (S.hideDone && S.queue.items.length ? " that isn\'t done" : "") + ".</div>";
@@ -469,7 +496,7 @@ body { margin: 0; }
       if (polls++ % 6 === 0) await loadQueue();
       S.status = "ready"; S.error = "";
     } catch (e) {
-      if (e.auth) { S.token = null; store.set("gpu-board.token", null); S.status = "need-token"; S.error = "GitHub rejected that token. Check it has Contents read and write on agent-board."; }
+      if (e.auth) { S.token = null; auth = null; store.set("gpu-board.token", null); store.set("gpu-board.auth", null); S.status = "need-token"; S.error = "GitHub rejected the token (expired or revoked). Sign in again, or paste a token with Contents read and write on agent-board."; }
       else { S.error = String(e.message || e); if (S.status !== "ready") S.status = "error"; }
     }
     S.loading = false;
@@ -660,7 +687,9 @@ body { margin: 0; }
 
   function render() {
     const connected = !!S.token;
-    $("setup").hidden = connected;
+    $("setup").hidden = connected || S.status === "signing-in";
+    $("signin-box").hidden = !(SIGNIN.clientId && SIGNIN.worker);
+    $("signin-off").hidden = !$("signin-box").hidden;
     $("board").hidden = !connected || S.tab !== "board";
     $("protocol").hidden = !connected || S.tab !== "protocol";
     $("forget").hidden = !connected;
@@ -669,7 +698,7 @@ body { margin: 0; }
     $("token-err").hidden = !(S.status === "need-token" && S.error);
     $("token-err").textContent = S.status === "need-token" ? S.error : "";
 
-    const notice = !connected ? "" : S.status === "loading" ? "Loading the board…" : S.error ? esc(S.error) + " Retrying every 5 s." : "";
+    const notice = S.status === "signing-in" ? "Signing in with GitHub…" : !connected ? "" : S.status === "loading" ? "Loading the board…" : S.error ? esc(S.error) + " Retrying every 5 s." : "";
     $("notice").hidden = !notice;
     $("notice-text").innerHTML = notice;
     $("protocol-text").textContent = S.protocol == null ? "Loading…" : S.protocol || "The protocol file is missing.";
@@ -754,7 +783,7 @@ body { margin: 0; }
   document.addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.tab) { S.tab = b.dataset.tab; refresh(); return; }
-    if (b.id === "forget") { store.set("gpu-board.token", null); S.token = null; S.control = null; S.status = "need-token"; S.error = ""; refresh(); return; }
+    if (b.id === "forget") { store.set("gpu-board.token", null); store.set("gpu-board.auth", null); S.token = null; auth = null; S.control = null; S.status = "need-token"; S.error = ""; refresh(); return; }
     const a = b.dataset.act, id = b.dataset.id;
     if (a === "collapse") { const k = b.dataset.key; if (collapsed[k]) delete collapsed[k]; else collapsed[k] = true; store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
     if (a === "collapse-all") { const m = machine(id); const close = !devicesOf(m).every((d) => collapsed[m.id + ":" + d.id]); devicesOf(m).forEach((d) => { if (close) collapsed[m.id + ":" + d.id] = true; else delete collapsed[m.id + ":" + d.id]; }); store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
@@ -790,14 +819,31 @@ body { margin: 0; }
     e.preventDefault();
     const v = $("token-input").value.trim();
     if (!v) return;
-    S.token = v; store.set("gpu-board.token", v); $("token-input").value = ""; S.status = "loading"; S.error = "";
+    S.token = v; auth = null; store.set("gpu-board.token", v); store.set("gpu-board.auth", null); $("token-input").value = ""; S.status = "loading"; S.error = "";
     refresh(); load();
   });
   $("hide-done").addEventListener("change", (e) => { S.hideDone = e.target.checked; refresh(); });
 
-  if (!S.token) S.status = "need-token";
+  $("signin").addEventListener("click", () => {
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    try { sessionStorage.setItem("gpu-board.state", state); } catch (e) { /* the state check on return then fails safely */ }
+    location.href = "https://github.com/login/oauth/authorize?" + new URLSearchParams({ client_id: SIGNIN.clientId, redirect_uri: PAGE_URL, state });
+  });
+  function signInReturn() {  // GitHub sent us back with ?code&state: swap the code for a token, once
+    const q = new URLSearchParams(location.search);
+    if (!q.get("code")) return null;
+    history.replaceState(null, "", location.pathname);
+    let want = null;
+    try { want = sessionStorage.getItem("gpu-board.state"); sessionStorage.removeItem("gpu-board.state"); } catch (e) { want = null; }
+    if (!want || q.get("state") !== want) { S.error = "Sign-in failed: GitHub's reply doesn't match a sign-in started in this browser. Try again."; return null; }
+    S.status = "signing-in";
+    return relay({ code: q.get("code") }).then(() => { S.status = "loading"; S.error = ""; },
+      (e) => { S.token = null; S.status = "need-token"; S.error = "Sign-in failed: " + (e.message || e) + "."; });
+  }
+  const signingIn = signInReturn();
+  if (!S.token && !signingIn) S.status = "need-token";
   render();
-  load();
+  if (signingIn) signingIn.then(() => { refresh(); load(); }); else load();
   setInterval(() => { if (!document.hidden) load(); else refresh(); }, POLL);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 })();
