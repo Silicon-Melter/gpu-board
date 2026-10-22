@@ -89,6 +89,10 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .qtable .qid { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
 .qtable .qnote { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .qtable .qadded, .qtable .btn { white-space: nowrap; }
+.qfold { display: flex; align-items: center; gap: 8px; margin-top: 12px; border: 0; background: none; padding: 4px 0; color: var(--muted); font-weight: 650; font-size: 13px; }
+.qfold:hover { color: var(--ink); }
+.qfold + .qwrap { margin-top: 6px; }
+.qfold[aria-expanded="false"] .chev { transform: rotate(-45deg); }
 .p-hold { color: var(--hold); background: var(--hold-bg); }
 
 .btns { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -324,7 +328,8 @@ body { margin: 0; }
   let auth = null; // a signed-in token's refresh token and expiry; null for a pasted token
   try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, jobs: [],
-    protocol: null, tab: "board", hideDone: true, busy: {}, loading: false, queue: null, queueError: "" };
+    protocol: null, tab: "board", hideDone: true, busy: {}, loading: false, queue: null, queueError: "",
+    showFinished: !!store.get("gpu-board.queue-finished") };  // the A100 queue's "Finished and withdrawn" section, closed by default
   const drafts = {}; // unsent messages, by job id, so a refresh never eats what you are typing
   let collapsed = {};
   try { collapsed = JSON.parse(store.get("gpu-board.collapsed") || "{}") || {}; } catch (e) { collapsed = {}; }
@@ -427,7 +432,8 @@ body { margin: 0; }
     };
     const rows = section("queue").filter((l) => /^\s*\|/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
     const head = (rows[0] || []).map((h) => h.toLowerCase());
-    const items = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c))).map((r) => {
+    // A second table in the section (e.g. done items in a <details> block) repeats the header row; skip it like a separator
+    const items = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c)) && r.join("|").toLowerCase() !== head.join("|")).map((r) => {
       const o = {}; head.forEach((h, i) => { o[h] = r[i] || ""; }); return o;
     });
     const prompts = {};
@@ -438,7 +444,10 @@ body { margin: 0; }
     return { items, prompts };
   }
   const qcol = (it, prefix) => { const k = Object.keys(it).find((h) => h.startsWith(prefix)); return k ? it[k] : ""; };
-  const qstate = (it) => { const t = qcol(it, "state"); const m = t.match(/^\s*([A-Za-z]+)\s*(.*)$/); return { word: m ? m[1].toLowerCase() : "", rest: m ? m[2] : t }; };
+  const qstate = (it) => {  // "ready (after A05)", "**done** — handed off": the state word, then the rest as a note
+    const t = qcol(it, "state"), m = t.match(/^\s*[*_]*([A-Za-z]+)[*_]*\s*(?:[—–-]\s*)?(.*)$/);
+    return { word: m ? m[1].toLowerCase() : "", rest: m ? m[2] : t };
+  };
   function qlink(path) {  // a link inside the queue repo, or a plain https link; anything else stays text
     const p = path.replace(/^\.\//, "");
     return /^https:\/\//.test(p) ? p : /^[\w.\/-]+$/.test(p) ? QUEUE_BLOB + p : null;
@@ -454,11 +463,16 @@ body { margin: 0; }
   function renderQueue() {
     if (S.queueError === "token") return '<div class="empty">The board can\'t read <span class="mono">ad-train-a100</span> yet. Add it under Repository access in your token\'s settings (github.com/settings/personal-access-tokens), or, if you signed in with GitHub, to the board App\'s installation (github.com/settings/installations), then reload.</div>';
     if (!S.queue) return '<div class="empty">' + (S.queueError ? "Couldn\'t load the queue: " + esc(S.queueError) : "Loading the A100 queue…") + "</div>";
-    const items = S.queue.items.filter((it) => !(S.hideDone && ["done", "withdrawn"].includes(qstate(it).word)));
-    if (!items.length) return '<div class="empty">Nothing in the A100 queue' + (S.hideDone && S.queue.items.length ? " that isn\'t done" : "") + ".</div>";
+    const over = (it) => ["done", "withdrawn"].includes(qstate(it).word);
+    const open = S.queue.items.filter((it) => !over(it)), finished = S.queue.items.filter(over);
+    return (open.length ? queueTable(open) : '<div class="empty">Nothing open in the A100 queue.</div>') +
+      (finished.length ? '<button type="button" class="qfold" data-act="queue-finished" aria-expanded="' + S.showFinished + '">' +
+        '<span class="chev" aria-hidden="true"></span>Finished and withdrawn (' + finished.length + ")</button>" + (S.showFinished ? queueTable(finished) : "") : "");
+  }
+  function queueTable(items) {
     return '<div class="qwrap"><table class="qtable"><thead><tr><th>ID</th><th>State</th><th>Task</th><th>Est. A100 h</th><th>Needs</th><th>Added</th><th>Report</th><th></th></tr></thead><tbody>' +
       items.map((it) => {
-        const id = qcol(it, "id"), st = qstate(it), prompt = S.queue.prompts[id];
+        const id = qcol(it, "id"), st = qstate(it), prompt = !["done", "withdrawn"].includes(st.word) && S.queue.prompts[id];
         return "<tr><td class=\"qid\">" + esc(id) + "</td>" +
           '<td><span class="pill ' + (QPILL[st.word] || "p-hold") + '">' + esc(st.word || "?") + "</span>" + (st.rest ? '<span class="qnote">' + mdInline(st.rest) + "</span>" : "") + "</td>" +
           "<td>" + mdInline(qcol(it, "task")) + "</td><td>" + mdInline(qcol(it, "est")) + "</td><td>" + mdInline(qcol(it, "needs")) + "</td>" +
@@ -787,6 +801,7 @@ body { margin: 0; }
     const a = b.dataset.act, id = b.dataset.id;
     if (a === "collapse") { const k = b.dataset.key; if (collapsed[k]) delete collapsed[k]; else collapsed[k] = true; store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
     if (a === "collapse-all") { const m = machine(id); const close = !devicesOf(m).every((d) => collapsed[m.id + ":" + d.id]); devicesOf(m).forEach((d) => { if (close) collapsed[m.id + ":" + d.id] = true; else delete collapsed[m.id + ":" + d.id]; }); store.set("gpu-board.collapsed", JSON.stringify(collapsed)); refresh(); return; }
+    if (a === "queue-finished") { S.showFinished = !S.showFinished; store.set("gpu-board.queue-finished", S.showFinished ? "1" : null); refresh(); return; }
     if (a === "copy-prompt") {
       const text = S.queue && S.queue.prompts[id];
       if (!text) return;
