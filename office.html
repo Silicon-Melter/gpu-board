@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agent office</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: summary, vault cabinet + A100 queue, then one room per machine (a desk per session, its helper desks under it), message arcs on top; a desk opens a side panel */
+:root {
+  --bg: #eef1f0; --surface: #fbfcfc; --surface-2: #f3f6f5; --ink: #131a18; --muted: #5a6661; --line: #d5dcd9;
+  --accent: #0e6a5f; --accent-soft: #dceeea; --glow: rgb(14 106 95 / .35);
+  --run: #2257ad; --run-bg: #e3ebf9; --queue: #855600; --queue-bg: #f7ebd2; --pause: #6546ab; --pause-bg: #ebe5f7;
+  --go: #19743a; --go-bg: #dcf1e3; --hold: #5f676d; --hold-bg: #e6e9eb; --bad: #b22a1f; --bad-bg: #fae4e1; --stale: #a84a06; --stale-bg: #fcebdc;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
+  --accent: #4cc1ae; --accent-soft: #163631; --glow: rgb(76 193 174 / .4);
+  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
+  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
+  --accent: #4cc1ae; --accent-soft: #163631; --glow: rgb(76 193 174 / .4);
+  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
+  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+[hidden] { display: none !important; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.mono { font-family: var(--mono); font-size: 12px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, a:focus-visible, .desk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+.fine { color: var(--muted); font-size: 12.5px; }
+
+.notice { background: var(--queue-bg); color: var(--queue); border-bottom: 1px solid var(--line); }
+.notice .wrap { padding-block: 9px; font-size: 13px; }
+.top .wrap { padding-block: 20px 12px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: end; justify-content: space-between; }
+.brand h1 { font-family: var(--display); font-stretch: 72%; font-weight: 800; font-size: 34px; letter-spacing: -.01em; line-height: 1; text-transform: uppercase; }
+.brand p { margin: 6px 0 0; color: var(--muted); max-width: 70ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.seg a { padding: 6px 12px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; text-decoration: none; }
+.seg a:hover { color: var(--ink); }
+.seg a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+
+.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 7px; padding: 6px 12px; font-weight: 650; font-size: 13px; }
+.btn:hover { border-color: var(--muted); }
+.btn.go { background: var(--go); border-color: var(--go); color: var(--surface); }
+.btn.link { background: none; border-color: transparent; color: var(--accent); padding-inline: 4px; text-decoration: underline; text-underline-offset: 2px; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+.setup { max-width: 640px; margin-block: 8px 48px; }
+.setup .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 12px; }
+.setup ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.setup input { font: inherit; font-family: var(--mono); font-size: 13px; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); width: 100%; }
+.setup .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.setup .err { color: var(--bad); font-size: 13px; }
+
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-block: 8px 18px; }
+.stat { background: var(--surface); padding: 12px 14px; }
+.stat b { display: block; font-family: var(--display); font-stretch: 80%; font-size: 28px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.stat.hot b { color: var(--accent); }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+.sec-head h2 { font-family: var(--display); font-stretch: 80%; font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+.sec-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.sec-head .btn { margin-left: auto; }
+
+.infra { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px; margin-bottom: 22px; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+.vault { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 4px 14px; }
+.vault svg { grid-row: span 2; color: var(--accent); }
+.vault .vwho { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.vbtn { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 650; box-shadow: 0 0 10px var(--glow); }
+.vname { font-family: var(--display); font-stretch: 80%; font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+.qlist { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.qlist li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 5px 0 5px 8px; border-top: 1px solid var(--line); border-left: 3px solid var(--hold); font-size: 12.5px; }
+.qlist li:first-child { border-top: 0; }
+.qlist li.running { border-left-color: var(--run); } .qlist li.ready { border-left-color: var(--queue); } .qlist li.blocked { border-left-color: var(--bad); }
+.qlist .qid { font-family: var(--mono); font-weight: 700; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 40px; }
+.stage { position: relative; padding-right: 22px; min-width: 0; }
+.arcs { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.arc { fill: none; stroke: var(--accent); opacity: .75; pointer-events: stroke; }
+.arc.dim { opacity: .18; } .arc.hot { opacity: 1; }
+.ah { fill: var(--accent); }
+.alabel { font: 600 11px var(--mono); fill: var(--accent); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; align-items: start; }
+.room { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.room.on_hold { background: var(--surface-2); }
+.room-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.room-head h3 { font-family: var(--display); font-stretch: 85%; font-size: 19px; font-weight: 700; }
+.sub-line { color: var(--muted); overflow-wrap: anywhere; }
+.status { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; align-self: start; white-space: nowrap; }
+.status.available { color: var(--go); background: var(--go-bg); } .status.on_hold { color: var(--hold); background: var(--hold-bg); }
+.gear { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.gchip { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); white-space: nowrap; }
+.gchip b { color: var(--ink); font-weight: 500; }
+.gchip.hot { border-color: var(--bad); color: var(--bad); }
+.reading { font-size: 12px; color: var(--muted); } .reading.old { color: var(--stale); }
+.floor { padding: 12px; display: grid; gap: 14px; background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 14px 14px; border-radius: 0 0 var(--radius) var(--radius); }
+.station { display: grid; gap: 6px; min-width: 0; }
+.desk { position: relative; background: var(--surface); border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 8px; padding: 9px 11px; display: grid; gap: 5px; cursor: pointer; min-width: 0; }
+.desk:hover { border-color: var(--muted); }
+.desk[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.desk.glow { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--glow); }
+.desk.ghost { background: var(--surface-2); border-style: dashed; cursor: default; }
+.desk-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.desk-name { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hold); flex: none; }
+.dot.live { background: var(--go); } .dot.warm { background: var(--queue); }
+.vbadge { margin-left: auto; flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; white-space: nowrap; }
+.glow .vbadge { color: var(--accent); border-color: var(--accent); }
+.desk-meta, .out, .djob .t { color: var(--muted); overflow-wrap: anywhere; }
+.out { font-size: 12px; }
+.djob { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 7px; align-items: center; font-size: 12.5px; }
+.djob .t { color: var(--ink); overflow-wrap: anywhere; }
+.mini { grid-column: 2; height: 4px; border-radius: 3px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.mini i { display: block; height: 100%; background: var(--run); }
+.pill { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 1px 7px; border-radius: 5px; white-space: nowrap; }
+.p-running { color: var(--run); background: var(--run-bg); } .p-queued { color: var(--queue); background: var(--queue-bg); }
+.p-paused { color: var(--pause); background: var(--pause-bg); } .p-blocked, .p-failed { color: var(--bad); background: var(--bad-bg); }
+.p-done { color: var(--go); background: var(--go-bg); } .p-hold { color: var(--hold); background: var(--hold-bg); } .p-stale { color: var(--stale); background: var(--stale-bg); }
+.subs { display: flex; flex-wrap: wrap; gap: 6px; margin-left: 10px; padding-left: 12px; border-left: 2px solid var(--line); }
+.sub { flex: 1 1 150px; min-width: 0; font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; display: grid; gap: 1px; }
+.sub.run { border-color: var(--run); }
+.sub b { font-weight: 650; overflow-wrap: anywhere; }
+.sub .m { color: var(--muted); overflow-wrap: anywhere; }
+.sub .tok { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 6px; }
+.more { flex: 1 1 100%; text-align: left; border: 1px dashed var(--line); background: none; border-radius: 6px; padding: 3px 8px; color: var(--muted); font-size: 12px; }
+.none { color: var(--muted); padding: 4px 2px; font-size: 12.5px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; min-width: 0; }
+.panel h3 { font-family: var(--display); font-stretch: 85%; font-size: 19px; font-weight: 700; overflow-wrap: anywhere; }
+.panel-head { display: flex; gap: 8px; align-items: start; justify-content: space-between; }
+.panel h4 { margin: 4px 0 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.evs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.evs li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12.5px; overflow-wrap: anywhere; }
+.evs li:first-child { border-top: 0; }
+.evs li.quiet { color: var(--muted); }
+.evs time { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+@media (min-width: 1000px) {
+  .layout.has-panel { grid-template-columns: minmax(0, 1fr) 380px; }
+  .panel { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+}
+@media (max-width: 999px) {
+  .panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; max-height: 58vh; overflow: auto; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .25); padding-bottom: max(14px, env(safe-area-inset-bottom, 0px)); }
+  .layout.has-panel .stage { padding-bottom: 58vh; }
+}
+@media (max-width: 560px) { .brand h1 { font-size: 28px; } .vault { grid-template-columns: 44px minmax(0, 1fr); } }
+@media (prefers-reduced-motion: no-preference) {
+  .sub.run .rd { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+}
+.rd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--run); margin-right: 5px; }
+</style>
+</head>
+<body>
+<div class="notice" id="notice" role="status" hidden><div class="wrap" id="notice-text"></div></div>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Agent office</h1>
+      <p>Who sits at which machine, which helpers they started, who messaged whom and who wrote to the vault. Last 24 hours.</p>
+    </div>
+    <div class="controls">
+      <nav class="seg" aria-label="Page"><a href="index.html">Board</a><a href="office.html" aria-current="page">Agent office</a></nav>
+      <span class="fine" id="stamp"></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="setup" class="setup" hidden>
+    <div class="sec-head"><h2>Connect the office</h2></div>
+    <div class="card">
+      <p>This page reads the private repo <span class="mono">Silicon-Melter/agent-board</span> (and the A100 queue in <span class="mono">ad-train-a100</span>) as you, with the same sign-in as the board. Easiest: <a href="index.html">sign in on the Board page</a>, then come back here. Or paste a token:</p>
+      <ol>
+        <li>On GitHub: Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
+        <li>Repository access: <b>Only select repositories</b> → <span class="mono">agent-board</span> and <span class="mono">ad-train-a100</span>.</li>
+        <li>Permissions → Repository permissions → <b>Contents: Read</b> is enough here (the board itself needs Read and write).</li>
+      </ol>
+      <form class="row" id="token-form">
+        <input id="token-input" type="password" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token">
+        <button type="submit" class="btn go">Connect</button>
+      </form>
+      <div class="err" id="token-err" hidden></div>
+      <p class="fine">Saved in this browser's storage for this site only, under the same key as the board.</p>
+    </div>
+  </section>
+
+  <section id="office" hidden>
+    <div class="summary" id="summary"></div>
+    <div class="infra">
+      <section class="card vault" id="vault" aria-label="Vault"></section>
+      <section aria-labelledby="queue-h">
+        <div class="sec-head"><h2 id="queue-h">A100 queue</h2><a class="btn link" href="https://github.com/Silicon-Melter/ad-train-a100/blob/main/QUEUE.md" target="_blank" rel="noopener">Open QUEUE.md</a></div>
+        <div class="card" id="queue"></div>
+      </section>
+    </div>
+    <div class="sec-head"><h2>Rooms</h2><p>One room per machine, one desk per Claude session. Click a desk for its last events. Arrows are messages between sessions.</p></div>
+    <div class="layout" id="layout">
+      <div class="stage" id="stage"><div class="rooms" id="rooms"></div><svg class="arcs" id="arcs" aria-hidden="true"></svg></div>
+      <aside class="panel" id="panel" aria-label="Session events" hidden></aside>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
+  const RELAY = "https://gpu-board-signin.noppawit37815.workers.dev/"; // the board's sign-in relay, used only to renew an 8 h signed-in token
+  const QUEUE_URL = "https://api.github.com/repos/Silicon-Melter/ad-train-a100/contents/QUEUE.md";
+  const MIN = 60e3, HR = 3600e3, DAY = 24 * HR;
+  const POLL = 30e3, SYNC_SILENT = 6 * MIN, GLOW = 60 * MIN, SUB_MAX = 6, EV_MAX = 30, SUB_STALE = 6 * HR;
+  const PILLS = ["running", "queued", "paused", "blocked", "failed", "done"];
+  const params = new URLSearchParams(location.search);
+  // ?fixture=office-fixture.json reads that file from this folder instead of GitHub (offline review; no token needed)
+  const FIXTURE = /^[\w.-]+\.json$/.test(params.get("fixture") || "") ? params.get("fixture") : null;
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
+  };
+  let auth = null; // a signed-in token's refresh token and expiry (written by the board page); null for a pasted token
+  try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
+  const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, queue: null, loading: false,
+    sel: null, want: params.get("select"), more: {}, model: null, fixedNow: null };
+  const $ = (id) => document.getElementById(id);
+  const now = () => (S.fixedNow != null ? S.fixedNow : Date.now());
+  const ms = (v) => typeof v === "number" ? (v < 1e12 ? v * 1000 : v) : Date.parse(v || "");
+  const machines = () => ((S.control && S.control.machines) || []).slice().sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+  const sessionUrl = (s) => (/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(String(s || "")) ? s : null);
+
+  // DOM builders: text only ever goes in as text nodes or attribute values, never as markup
+  function build(el, attrs, kids) {
+    Object.entries(attrs || {}).forEach(([k, v]) => { if (v != null && v !== false) el.setAttribute(k, v === true ? "" : v); });
+    kids.flat(Infinity).forEach((c) => { if (c != null && c !== false) el.append(c instanceof Node ? c : document.createTextNode(String(c))); });
+    return el;
+  }
+  const h = (tag, attrs, ...kids) => build(document.createElement(tag), attrs, kids);
+  const sv = (tag, attrs, ...kids) => build(document.createElementNS("http://www.w3.org/2000/svg", tag), attrs, kids);
+
+  function ago(ts) {
+    const d = now() - ts;
+    if (!isFinite(d)) return "at an unknown time";
+    if (d < 45e3) return "just now";
+    if (d < HR) return Math.max(1, Math.round(d / MIN)) + " min ago";
+    if (d < 48 * HR) { const hh = Math.floor(d / HR), mm = Math.round((d % HR) / MIN); return hh + " h" + (mm ? " " + mm + " min" : "") + " ago"; }
+    return Math.round(d / DAY) + " d ago";
+  }
+  const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
+  const shortModel = (m) => String(m || "").replace(/^claude-/, "");
+
+  // ---- GitHub (same approach as the board page) -------------------------------------------------------------------
+  function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0))); }
+  let renewing = null;
+  function renew() {
+    return (renewing = renewing || fetch(RELAY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: auth.refresh }) })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.access_token) throw new Error("the sign-in relay said " + r.status);
+        S.token = j.access_token;
+        auth = j.refresh_token ? { refresh: j.refresh_token, exp: j.expires_in ? Date.now() + j.expires_in * 1000 : null } : null;
+        store.set("gpu-board.token", S.token); store.set("gpu-board.auth", auth && JSON.stringify(auth));
+      }).finally(() => { renewing = null; }));
+  }
+  async function gh(path, opts) {
+    if (auth && auth.exp && Date.now() > auth.exp - MIN) await renew().catch(() => {});
+    for (let tries = 0; ; tries++) {
+      const r = await fetch(/^https:/.test(path) ? path : API + path, Object.assign({ cache: "no-store" }, opts, {
+        headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
+      }));
+      if (r.status === 401 && auth && !tries && await renew().then(() => true, () => false)) continue;
+      if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
+      return r;
+    }
+  }
+  async function readFile(path, ref) {
+    const r = await gh("/contents/" + path + "?ref=" + encodeURIComponent(ref));
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("GitHub said " + r.status + " for " + path + " on " + ref);
+    return b64decode((await r.json()).content);
+  }
+  // One conditional request for all board/* branch heads (a 304 costs nothing); only branches that moved are downloaded.
+  let refsTag = null, heads = {}, queueTag = null;
+  async function loadLive() {
+    if (!S.control) { refsTag = null; heads = {}; }
+    const r = await gh("/git/matching-refs/heads/board/", { headers: refsTag ? { "If-None-Match": refsTag } : {} });
+    if (r.status !== 304) {
+      if (!r.ok) throw new Error("GitHub said " + r.status + " when listing the board branches");
+      const tag = r.headers.get("ETag"), cur = {};
+      (await r.json()).forEach((x) => { cur[x.ref.replace("refs/heads/", "")] = x.object.sha; });
+      if (!cur["board/control"]) throw new Error("The board/control branch is missing in agent-board.");
+      if (cur["board/control"] !== heads["board/control"]) S.control = JSON.parse(await readFile("control.json", cur["board/control"]));
+      const states = {};
+      await Promise.all(machines().map(async (m) => {
+        const b = "board/" + m.id;
+        if (!cur[b]) states[m.id] = null;
+        else if (cur[b] === heads[b] && S.states[m.id]) states[m.id] = S.states[m.id];
+        else { const t = await readFile("state.json", cur[b]); states[m.id] = t ? JSON.parse(t) : null; }
+      }));
+      S.states = states; heads = cur; refsTag = tag;
+    }
+    try { // the A100 queue is a side panel: failing to read it never blanks the office
+      const q = await gh(QUEUE_URL, { headers: queueTag && S.queue ? { "If-None-Match": queueTag } : {} });
+      if (q.status !== 304) { if (!q.ok) throw new Error(String(q.status)); S.queue = parseQueue(b64decode((await q.json()).content)); queueTag = q.headers.get("ETag"); }
+    } catch (e) { if (e.auth) throw e; S.queue = S.queue || { error: String(e.message || e), items: [] }; }
+  }
+  async function loadFixture() {
+    const r = await fetch(FIXTURE, { cache: "no-store" });
+    if (!r.ok) throw new Error("Couldn't read " + FIXTURE + " (" + r.status + ")");
+    const j = await r.json();
+    S.control = j.control; S.states = j.states || {}; S.queue = j.queue ? parseQueue(j.queue) : null;
+    if (j.now) S.fixedNow = ms(j.now); // the sample is frozen at its own "now", so ages and the 60 min vault glow stay as authored
+  }
+  const plain = (s) => s.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*`_]/g, "").replace(/\s+/g, " ").trim();
+  function parseQueue(md) {  // the "| A1x | ... | State | ..." table under "## Queue" (first table header decides the columns)
+    const lines = md.split("\n"), i = lines.findIndex((l) => /^##\s+queue\s*$/i.test(l)), rest = i >= 0 ? lines.slice(i + 1) : lines;
+    const end = rest.findIndex((l) => /^##\s/.test(l));
+    const rows = (end >= 0 ? rest.slice(0, end) : rest).filter((l) => /^\s*\|/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+    const head = (rows[0] || []).map((c) => c.toLowerCase()), idc = Math.max(0, head.findIndex((c) => c.startsWith("id"))), stc = Math.max(1, head.findIndex((c) => c.startsWith("state")));
+    const items = rows.slice(1).filter((r) => /^[A-Za-z]+\d+/.test(r[idc] || "") && r.join("|").toLowerCase() !== head.join("|"))
+      .map((r) => { const text = plain(r[stc] || ""), m = text.match(/^([A-Za-z]+)/); return { id: r[idc], text, word: m ? m[1].toLowerCase() : "" }; });
+    return { items };
+  }
+
+  // ---- derived state: desks, helper desks, message arcs, vault writes ----------------------------------------------
+  function derive() {
+    const t = now(), cut = t - DAY, desks = new Map(), evs = [], orphans = {}, cleared = (S.control && S.control.cleared) || {};
+    const mk = (sid, mid) => {
+      if (!desks.has(sid)) desks.set(sid, { sid, machine: mid, name: "", repo: "", lastTs: 0, jobs: [], ev: [], subs: [], by: {}, out: [], sent: 0, vault: 0, vaultLast: 0, ops: {} });
+      return desks.get(sid);
+    };
+    machines().forEach((m) => {  // sessions the machine's tracer saw, and their events (old state.json files have no agents key)
+      const ag = S.states[m.id] && S.states[m.id].agents;
+      if (!ag || typeof ag !== "object") return;
+      Object.entries(ag.sessions || {}).forEach(([sid, s]) => {
+        const d = mk(sid, m.id); d.machine = m.id; d.name = (s && s.name) || ""; d.repo = (s && s.repo) || ""; d.lastTs = Math.max(d.lastTs, ms(s && s.last) || 0);
+      });
+      (Array.isArray(ag.events) ? ag.events : []).forEach((ev) => { if (ev && ev.session_id && ms(ev.ts) >= cut) { mk(ev.session_id, m.id); evs.push(ev); } });
+    });
+    machines().forEach((m) => {  // sessions only known from a board job
+      const st = S.states[m.id];
+      Object.entries((st && st.jobs) || {}).forEach(([id, j]) => {
+        if (cleared[id] && cleared[id].for === j.created) return;
+        const job = Object.assign({}, j, { id, machine: m.id });
+        if (!j.session_id) { (orphans[m.id] = orphans[m.id] || []).push(job); return; }
+        const d = mk(j.session_id, m.id); d.repo = d.repo || j.repo || ""; d.jobs.push(job); d.lastTs = Math.max(d.lastTs, ms(j.updated) || 0);
+      });
+    });
+    const list = [...desks.values()];
+    list.forEach((d) => { d.name = d.name || (d.repo || "session") + " " + d.sid.slice(0, 8); });
+    const byName = new Map();
+    list.forEach((d) => byName.set(d.sid.toLowerCase(), d));
+    list.forEach((d) => byName.set(d.name.toLowerCase(), d));  // names win over ids
+
+    // a helper desk joins its events by tool_use_id (start, launched) and by child id (launched, begin, stop), in either order
+    const sub = (d, tool, child) => {
+      let a = tool && d.by["t:" + tool], b = child && d.by["c:" + child], s = a || b;
+      if (a && b && a !== b) { Object.keys(b).forEach((k) => { if (a[k] == null || a[k] === "" || (typeof a[k] === "number" && isNaN(a[k]))) a[k] = b[k]; }); d.subs.splice(d.subs.indexOf(b), 1); s = a; }
+      if (!s) { s = { tool: null, child: null, desc: "", type: "", atype: "", model: "", status: "", parent: null, tok: null, start: NaN, begin: NaN, stop: NaN }; d.subs.push(s); }
+      if (tool) { s.tool = tool; d.by["t:" + tool] = s; }
+      if (child) { s.child = child; d.by["c:" + child] = s; }
+      return s;
+    };
+    const pairs = new Map(), ops = {};
+    let msgs = 0, vaultTotal = 0;
+    evs.sort((a, b) => ms(a.ts) - ms(b.ts)).forEach((ev) => {
+      const d = desks.get(ev.session_id), ts = ms(ev.ts), kid = ev.child || ev.agent_id;
+      d.ev.push(ev); d.lastTs = Math.max(d.lastTs, ts);
+      if (ev.ev === "subagent_start") { const s = sub(d, ev.tool_use_id, null); s.desc = ev.description || s.desc; s.type = ev.subagent_type || s.type; s.model = ev.model || s.model; s.start = ts; s.parent = ev.agent_id || null; }
+      else if (ev.ev === "subagent_launched") { const s = sub(d, ev.tool_use_id, ev.child); s.status = ev.status || s.status; }
+      else if (ev.ev === "subagent_begin" && kid) { const s = sub(d, null, kid); s.atype = ev.agent_type || s.atype; s.begin = ts; }
+      else if (ev.ev === "subagent_stop" && kid) { const s = sub(d, null, kid); s.model = ev.model || s.model; if (ev.tokens_total != null) s.tok = Number(ev.tokens_total); s.stop = ts; }
+      else if (ev.ev === "message") {
+        msgs++; d.sent++;
+        const to = byName.get(String(ev.to || "").toLowerCase());
+        if (to && to !== d) { const k = d.sid + ">" + to.sid; if (!pairs.has(k)) pairs.set(k, { from: d.sid, to: to.sid, n: 0, last: ev }); const p = pairs.get(k); p.n++; p.last = ev; }
+        else d.out.push(ev);
+      } else if (ev.ev === "vault_write") { d.vault++; d.vaultLast = ts; vaultTotal++; d.ops[ev.op || "?"] = (d.ops[ev.op || "?"] || 0) + 1; ops[ev.op || "?"] = (ops[ev.op || "?"] || 0) + 1; }
+    });
+    let running = 0;
+    list.forEach((d) => {
+      d.lastTs = d.lastTs || NaN;
+      d.glow = t - d.vaultLast <= GLOW;
+      d.subs.sort((a, b) => (subState(b) === "running") - (subState(a) === "running") || (subStart(b) || 0) - (subStart(a) || 0));
+      running += d.subs.filter((s) => subState(s) === "running").length;
+    });
+    const byMachine = {};
+    list.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).forEach((d) => { (byMachine[d.machine] = byMachine[d.machine] || []).push(d); });
+    return { desks, list, byMachine, orphans, arcs: [...pairs.values()], msgs, running, vault: { total: vaultTotal, ops, glow: list.filter((d) => d.glow).sort((a, b) => b.vaultLast - a.vaultLast) } };
+  }
+  const subStart = (s) => (isNaN(s.start) ? s.begin : s.start);
+  // done = has a stop event; a helper with no stop for over 6 h is shown as "no stop seen" rather than running forever
+  const subState = (s) => (!isNaN(s.stop) ? "done" : now() - subStart(s) > SUB_STALE ? "stale" : "running");
+
+  // ---- rendering ------------------------------------------------------------------------------------------------
+  const pill = (state, text) => h("span", { class: "pill " + (PILLS.includes(state) ? "p-" + state : state === "stale" ? "p-stale" : "p-hold") }, text || state || "?");
+  function jobEl(j, d) {
+    const pct = Math.max(0, Math.min(100, Number(j.pct) || 0)), elsewhere = j.machine !== d.machine;
+    return h("div", { class: "djob" }, pill(j.state), h("span", { class: "t" }, j.task || j.id, pct && j.state !== "done" ? " · " + pct + "%" : "", elsewhere ? " (on " + j.machine + (j.res ? "/" + j.res : "") + ")" : ""),
+      j.state === "running" || j.state === "paused" ? h("div", { class: "mini" }, h("i", { style: "width:" + pct + "%" })) : null);
+  }
+  function subEl(s) {
+    const st = subState(s);
+    return h("div", { class: "sub" + (st === "running" ? " run" : "") },
+      h("div", null, st === "running" ? h("span", { class: "rd" }) : null, s.parent ? "↳ " : "", h("b", null, s.desc || "untitled subagent")),
+      h("div", { class: "m" }, [s.type || s.atype, shortModel(s.model)].filter(Boolean).join(" · ")),
+      h("div", null, pill(st === "done" ? "done" : st === "running" ? "running" : "stale", st === "stale" ? "no stop seen" : st), s.tok != null && !isNaN(s.tok) ? h("span", { class: "tok" }, fmtTok(s.tok) + " tokens") : null));
+  }
+  function stationEl(d) {
+    const live = d.jobs.filter((j) => j.state !== "done"), finished = d.jobs.length - live.length;
+    const open = S.more[d.sid], shown = open ? d.subs : d.subs.slice(0, SUB_MAX), hidden = d.subs.length - SUB_MAX;
+    const age = now() - d.lastTs;
+    const desk = h("div", { class: "desk" + (d.glow ? " glow" : ""), role: "button", tabindex: "0", "data-k": "desk:" + d.sid, "data-sid": d.sid, "aria-pressed": String(S.sel === d.sid), "aria-label": "Session " + d.name },
+      h("div", { class: "desk-top" }, h("span", { class: "dot " + (age < 10 * MIN ? "live" : age < 2 * HR ? "warm" : "") }), h("span", { class: "desk-name" }, d.name),
+        d.vault ? h("span", { class: "vbadge", title: d.vault + " vault writes in 24 h" + (d.glow ? ", the last one under an hour ago" : "") }, "vault ×" + d.vault) : null),
+      h("div", { class: "desk-meta mono" }, (d.repo || "no repo") + " · seen " + ago(d.lastTs)),
+      live.map((j) => jobEl(j, d)),
+      finished ? h("div", { class: "out" }, "+" + finished + " finished job" + (finished > 1 ? "s" : "")) : null,
+      d.out.length > 3 ? h("div", { class: "out" }, "+" + (d.out.length - 3) + " earlier messages (open the desk)") : null,
+      d.out.slice(-3).map((ev) => h("div", { class: "out" }, "→ " + (ev.to || "?") + (ev.summary ? ": " + ev.summary : ""))));
+    return h("div", { class: "station" }, desk, d.subs.length ? h("div", { class: "subs", "aria-label": "Helper agents of " + d.name }, shown.map(subEl),
+      hidden > 0 ? h("button", { type: "button", class: "more", "data-more": d.sid, "data-k": "more:" + d.sid }, open ? "show fewer" : "+" + hidden + " more") : null) : null);
+  }
+  function roomEl(m, M) {
+    const t = S.states[m.id] ? { st: S.states[m.id], silent: now() - ms(S.states[m.id].at) > SYNC_SILENT } : null;
+    const gear = (m.devices || []).map((dv) => {
+      const r = t && t.st.devices && t.st.devices[dv.id], f = (v, u) => (v == null ? "—" : Math.round(v) + u);
+      return h("span", { class: "gchip" + (r && r.t >= (dv.kind === "cpu" ? 95 : 87) ? " hot" : "") }, (dv.label || dv.id) + " ",
+        h("b", null, r ? f(r.t, "°C") + " " + f(r.u, "%") + (r.m != null ? " " + Number(r.m).toFixed(1) + (r.mt || dv.mem ? "/" + (r.mt || dv.mem) : "") + " GB" : "") : "—"));
+    });
+    const mine = M.byMachine[m.id] || [], orph = M.orphans[m.id] || [];
+    return h("article", { class: "room " + (m.status === "available" ? "available" : "on_hold") },
+      h("div", { class: "room-head" },
+        h("div", null, h("h3", null, m.name || m.id), h("div", { class: "sub-line mono" }, m.id + (m.spec ? " · " + m.spec : ""))),
+        h("span", { class: "status " + (m.status === "available" ? "available" : "on_hold") }, m.status === "available" ? "Available" : "On hold"),
+        h("div", { class: "gear" }, gear, h("span", { class: "reading" + (t && t.silent ? " old" : "") }, !t ? "No sync from this PC yet." : t.silent ? "Sync silent since " + ago(ms(t.st.at)) : "Synced " + ago(ms(t.st.at))))),
+      h("div", { class: "floor" },
+        mine.length ? mine.map(stationEl) : h("div", { class: "none" }, "No agent session seen here in the last 24 h."),
+        orph.length ? h("div", { class: "desk ghost" }, h("div", { class: "desk-meta" }, "Jobs with no known session"), orph.filter((j) => j.state !== "done").map((j) => jobEl(j, { machine: m.id }))) : null));
+  }
+  function vaultEl(M) {
+    const v = M.vault, opsText = Object.entries(v.ops).map(([k, n]) => n + " " + k).join(", ");
+    return [
+      sv("svg", { viewBox: "0 0 56 56", width: "56", height: "56", "aria-hidden": "true", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linejoin": "round", "stroke-linecap": "round" },
+        sv("rect", { x: "10", y: "4", width: "36", height: "48", rx: "3" }), sv("path", { d: "M10 20h36M10 36h36M23 12h10M23 28h10M23 44h10" })),
+      h("div", null, h("span", { class: "vname" }, "Vault"), " ", h("span", { class: "fine" }, v.total + " write" + (v.total === 1 ? "" : "s") + " in 24 h" + (opsText ? " (" + opsText + ")" : ""))),
+      h("div", null, v.glow.length
+        ? [h("span", { class: "fine" }, "Writing within the last hour:"), h("div", { class: "vwho" }, v.glow.map((d) => h("button", { type: "button", class: "vbtn", "data-sid": d.sid, "data-k": "vault:" + d.sid, title: "Open " + d.name }, d.name + " · " + ago(d.vaultLast))))]
+        : h("span", { class: "fine" }, "No vault writes in the last hour."))];
+  }
+  function queueEl() {
+    if (!S.queue) return h("div", { class: "none" }, S.status === "ready" ? "Couldn't read the queue." : "Loading the A100 queue…");
+    if (S.queue.error) return h("div", { class: "none" }, "Couldn't read the A100 queue (" + S.queue.error + "). The token needs ad-train-a100.");
+    const over = (it) => ["done", "withdrawn"].includes(it.word), open = S.queue.items.filter((it) => !over(it)), fin = S.queue.items.length - open.length;
+    return h("div", null, open.length ? h("ul", { class: "qlist" }, open.map((it) => h("li", { class: ["running", "ready", "blocked"].includes(it.word) ? it.word : "" },
+      h("span", { class: "qid" }, it.id), h("span", { title: it.text }, it.text.length > 60 ? it.text.slice(0, 59) + "…" : it.text)))) : h("div", { class: "none" }, "Nothing open in the A100 queue."),
+      fin ? h("div", { class: "fine" }, fin + " finished or withdrawn item" + (fin > 1 ? "s" : "") + " not shown.") : null);
+  }
+  // plain-words line for one event; helper lookups go through the desk's tool_use_id / child maps
+  function words(ev, d) {
+    const nm = (id) => { const s = id && d.by["c:" + id]; return s && s.desc ? s.desc : id ? String(id).slice(0, 8) : "?"; };
+    const subOf = (e) => (e.tool_use_id && d.by["t:" + e.tool_use_id]) || (e.child && d.by["c:" + e.child]) || ((e.ev === "subagent_begin" || e.ev === "subagent_stop") && e.agent_id && d.by["c:" + e.agent_id]) || null;
+    const inside = ev.agent_id && !/^subagent_(begin|stop)$/.test(ev.ev) ? " (inside subagent '" + nm(ev.agent_id) + "')" : "";
+    const s = subOf(ev), desc = s && s.desc ? s.desc : "untitled";
+    if (ev.ev === "subagent_start") return "started subagent '" + (ev.description || "untitled") + "' (" + [ev.subagent_type, shortModel(ev.model)].filter(Boolean).join(", ") + ")" + inside;
+    if (ev.ev === "subagent_launched") return "subagent '" + desc + "' launched" + (ev.status ? " (" + ev.status + ")" : "");
+    if (ev.ev === "subagent_begin") return "subagent '" + desc + "' began" + (ev.agent_type ? " as " + ev.agent_type : "");
+    if (ev.ev === "subagent_stop") { const bits = [shortModel(ev.model), ev.tokens_total != null ? fmtTok(Number(ev.tokens_total)) + " tokens" : ""].filter(Boolean); return "subagent '" + desc + "' finished" + (bits.length ? " (" + bits.join(", ") + ")" : ""); }
+    if (ev.ev === "message") return "sent message to " + (ev.to || "?") + (ev.summary ? ": " + ev.summary : "") + inside;
+    if (ev.ev === "vault_write") return "wrote to the vault" + (ev.op ? " (" + ev.op + ")" : "") + inside;
+    return String(ev.ev || "event") + inside;
+  }
+  function panelEl(d, M) {
+    const evs = d.ev.slice(-EV_MAX).reverse(), url = d.jobs.map((j) => sessionUrl(j.session)).find(Boolean);
+    const got = M.arcs.filter((a) => a.to === d.sid).map((a) => M.desks.get(a.from).name + (a.n > 1 ? " ×" + a.n : ""));
+    const running = d.subs.filter((s) => subState(s) === "running").length;
+    return [
+      h("div", { class: "panel-head" }, h("div", null, h("h3", null, d.name), h("div", { class: "desk-meta mono" }, (d.repo || "no repo") + " · " + d.machine + " · " + d.sid.slice(0, 8) + " · seen " + ago(d.lastTs))),
+        h("button", { type: "button", class: "btn", "data-close": "1", "aria-label": "Close the panel" }, "Close")),
+      h("div", { class: "fine" }, d.subs.length + " helper" + (d.subs.length === 1 ? "" : "s") + " (" + running + " running) · " + d.sent + " message" + (d.sent === 1 ? "" : "s") + " sent · " + d.vault + " vault write" + (d.vault === 1 ? "" : "s") + " in 24 h" + (got.length ? " · got messages from " + got.join(", ") : "")),
+      url ? h("a", { class: "btn link", href: url, target: "_blank", rel: "noopener" }, "Open session") : null,
+      d.jobs.length ? [h("h4", null, "Board jobs"), d.jobs.map((j) => jobEl(j, d))] : null,
+      h("h4", null, evs.length ? "Last " + evs.length + " events, newest first" : "Events"),
+      evs.length ? h("ol", { class: "evs" }, evs.map((ev) => h("li", { class: /^subagent_(launched|begin)$/.test(ev.ev) ? "quiet" : "" }, h("time", null, hhmm(ms(ev.ts))), h("span", null, words(ev, d)))))
+        : h("div", { class: "none" }, "No events traced for this session in the last 24 h.")];
+  }
+  // arcs: one per (sender, target) pair, from the sender's desk to the target's desk; drawn after layout from the desks' boxes
+  function drawArcs() {
+    const svg = $("arcs"), stage = $("stage"), M = S.model;
+    svg.replaceChildren();
+    if (!M || !M.arcs.length) return;
+    const R = stage.getBoundingClientRect();
+    svg.setAttribute("width", R.width); svg.setAttribute("height", R.height); svg.setAttribute("viewBox", "0 0 " + R.width + " " + R.height);
+    svg.append(sv("defs", null, sv("marker", { id: "ah", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto" }, sv("path", { d: "M0 0L10 5L0 10z", class: "ah" }))));
+    const box = (sid) => {
+      const el = [...stage.querySelectorAll(".desk[data-sid]")].find((e) => e.dataset.sid === sid);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { l: r.left - R.left, r: r.right - R.left, y: (r.top + r.bottom) / 2 - R.top };
+    };
+    M.arcs.forEach((a) => {
+      const A = box(a.from), B = box(a.to);
+      if (!A || !B) return;
+      const dy = a.from < a.to ? -4 : 4, y1 = A.y + dy, y2 = B.y + dy;  // a reply gets its own line beside the original
+      let x1, x2, c1, c2;
+      if (B.l > A.r + 10) { x1 = A.r; x2 = B.l; c1 = x1 + Math.max(24, (x2 - x1) / 2); c2 = x2 - Math.max(24, (x2 - x1) / 2); }
+      else if (A.l > B.r + 10) { x1 = A.l; x2 = B.r; c1 = x1 - Math.max(24, (x1 - x2) / 2); c2 = x2 + Math.max(24, (x1 - x2) / 2); }
+      else { x1 = A.r; x2 = B.r; const b = Math.max(8, Math.min(20, R.width - Math.max(x1, x2) - 10)) + (dy > 0 ? 8 : 0); c1 = x1 + b; c2 = x2 + b; }  // same column: bow out into the right margin
+      const d = "M" + x1 + " " + y1 + "C" + c1 + " " + y1 + " " + c2 + " " + y2 + " " + x2 + " " + y2;
+      const hot = S.sel && (S.sel === a.from || S.sel === a.to), dim = S.sel && !hot;
+      const title = M.desks.get(a.from).name + " → " + M.desks.get(a.to).name + (a.n > 1 ? " (" + a.n + " messages, last: " : " (") + (a.last.summary || "no summary") + ", " + ago(ms(a.last.ts)) + ")";
+      svg.append(sv("path", { d, class: "arc" + (hot ? " hot" : dim ? " dim" : ""), "stroke-width": String(1.5 + Math.min(a.n, 4) * 0.5 + (hot ? 1 : 0)), "marker-end": "url(#ah)" }, sv("title", null, title)));
+      if (a.n > 1) svg.append(sv("text", { x: String((x1 + 3 * c1 + 3 * c2 + x2) / 8), y: String((y1 + y2) / 2 + (dy > 0 ? 12 : -4)), class: "alabel", "text-anchor": "middle" }, "×" + a.n));
+    });
+  }
+  function render() {
+    const connected = !!S.token || !!FIXTURE;
+    $("setup").hidden = connected;
+    $("office").hidden = !connected || !S.control;
+    $("token-err").hidden = !(S.status === "need-token" && S.error);
+    $("token-err").textContent = S.status === "need-token" ? S.error : "";
+    const notice = !connected ? "" : S.status === "loading" ? "Loading the office…" : S.error ? S.error + " Retrying every 30 s." : "";
+    $("notice").hidden = !notice; $("notice-text").textContent = notice;
+    $("stamp").textContent = FIXTURE ? "Offline sample " + FIXTURE + ", time frozen at " + hhmm(now()) : "";
+    if (!connected || !S.control) return;
+    const M = (S.model = derive());
+    if (S.want) { const w = S.want.toLowerCase(), d = M.list.find((x) => x.name.toLowerCase() === w || x.sid.toLowerCase() === w); if (d) S.sel = d.sid; S.want = null; }
+    if (S.sel && !M.desks.has(S.sel)) S.sel = null;
+    const ms_ = machines(), syncing = ms_.filter((m) => S.states[m.id] && now() - ms(S.states[m.id].at) <= SYNC_SILENT).length;
+    $("summary").replaceChildren(...[["Sessions", M.list.length, ""], ["Helpers running", M.running, M.running ? "hot" : ""], ["Messages · 24 h", M.msgs, ""],
+      ["Vault writes · 24 h", M.vault.total, M.vault.glow.length ? "hot" : ""], ["PCs syncing", syncing + " / " + ms_.length, ""]]
+      .map(([k, v, c]) => h("div", { class: "stat " + c }, h("b", null, v), h("span", null, k))));
+    $("vault").replaceChildren(...vaultEl(M));
+    $("queue").replaceChildren(queueEl());
+    $("rooms").replaceChildren(...(ms_.length ? ms_.map((m) => roomEl(m, M)) : [h("div", { class: "none" }, "No machines in control.json yet.")]));
+    $("layout").classList.toggle("has-panel", !!S.sel);
+    $("panel").hidden = !S.sel;
+    $("panel").replaceChildren(...(S.sel ? panelEl(M.desks.get(S.sel), M).flat(Infinity).filter(Boolean) : []));
+    drawArcs();
+  }
+  function refresh() {  // re-render and put keyboard focus back on the same desk or button
+    const k = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.k : null;
+    render();
+    if (k) { const el = [...document.querySelectorAll("[data-k]")].find((e) => e.dataset.k === k); if (el) el.focus({ preventScroll: true }); }
+  }
+  const pick = (sid) => { S.sel = S.sel === sid ? null : sid; refresh(); };
+
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest && e.target.closest("[data-sid], [data-more], [data-close]");
+    if (!t || !$("office").contains(t)) return;
+    if (t.dataset.close) { S.sel = null; refresh(); }
+    else if (t.dataset.more) { S.more[t.dataset.more] = !S.more[t.dataset.more]; refresh(); }
+    else pick(t.dataset.sid);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && S.sel) { S.sel = null; refresh(); return; }
+    const t = e.target;
+    if ((e.key === "Enter" || e.key === " ") && t.classList && t.classList.contains("desk") && t.dataset.sid) { e.preventDefault(); pick(t.dataset.sid); }
+  });
+  $("token-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("token-input").value.trim();
+    if (!v) return;
+    S.token = v; auth = null; store.set("gpu-board.token", v); store.set("gpu-board.auth", null); $("token-input").value = ""; S.status = "loading"; S.error = "";
+    refresh(); load();
+  });
+  let resizeRaf = 0;
+  window.addEventListener("resize", () => { cancelAnimationFrame(resizeRaf); resizeRaf = requestAnimationFrame(drawArcs); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawArcs);
+
+  async function load() {
+    if (S.loading || (!FIXTURE && !S.token)) return;
+    S.loading = true;
+    try { await (FIXTURE ? loadFixture() : loadLive()); S.status = "ready"; S.error = ""; }
+    catch (e) {
+      if (e.auth) { S.token = null; auth = null; store.set("gpu-board.token", null); store.set("gpu-board.auth", null); S.status = "need-token"; S.error = "GitHub rejected the token (expired or revoked). Sign in again on the Board page, or paste a new token."; }
+      else { S.error = String(e.message || e); if (S.status !== "ready") S.status = "error"; }
+    }
+    S.loading = false;
+    refresh();
+  }
+  if (!S.token && !FIXTURE) S.status = "need-token";
+  render();
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, POLL);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>
