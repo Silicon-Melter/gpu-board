@@ -68,7 +68,8 @@
     const untracedIn = (mid) => [...leadOf.values()].filter((l) => l.untraced && l.machine === mid);
     const target = (name) => {  // where a message to `name` (no desk of that name) lands
       const low = String(name || "").toLowerCase(), hit = mids.filter((id) => low.includes(String(id).toLowerCase()));
-      if (hit.length === 1) { const u = untracedIn(hit[0]); if (u.length === 1) { if (!u[0].aliases.includes(name)) u[0].aliases.push(name); return u[0].id; } }
+      if (hit.length === 1) { const u = untracedIn(hit[0]); if (u.length === 1) { if (!u[0].aliases.includes(name)) u[0].aliases.push(name); return u[0].id; }
+        if (!u.length && (M.dismissed || []).some((x) => x.machine === hit[0] && !x.traced)) return null; }  // it meant a desk the owner dismissed
       const id = "x:" + low;
       if (!leadOf.has(id)) leadOf.set(id, { id, sid: null, kind: "lead", name: String(name || "?"), repo: "", machine: "elsewhere", lastTs: NaN, untraced: true, glow: false, vault: null, aliases: [], sent: 0, got: 0, d: null, elsewhere: true });
       return id;
@@ -77,7 +78,7 @@
     // 2. messages, one entry per message, then one line per unordered pair
     const msgs = [];
     M.arcs.forEach((a) => a.list.forEach((ev) => msgs.push({ ts: OM.ms(ev.ts), from: "d:" + a.from, to: "d:" + a.to, summary: ev.summary || "" })));
-    M.list.forEach((d) => d.out.forEach((ev) => msgs.push({ ts: OM.ms(ev.ts), from: "d:" + d.sid, to: target(ev.to), summary: ev.summary || "", toName: ev.to })));
+    M.list.forEach((d) => d.out.forEach((ev) => { const to = target(ev.to); if (to) msgs.push({ ts: OM.ms(ev.ts), from: "d:" + d.sid, to, summary: ev.summary || "", toName: ev.to }); }));
     msgs.sort((a, b) => a.ts - b.ts);
     msgs.forEach((m) => { m.fromName = leadOf.get(m.from).name; m.toName = leadOf.get(m.to).name; leadOf.get(m.from).sent++; leadOf.get(m.to).got++; });
     const pairs = new Map();

@@ -183,6 +183,10 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .mv button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .mv button:disabled { opacity: .35; }
 .mv-node { position: absolute; z-index: 3; }
+.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20; max-width: min(92vw, 560px); background: var(--ink); color: var(--surface); border-radius: 8px; padding: 9px 14px; font-size: 13px; box-shadow: 0 4px 14px rgb(0 0 0 / .25); }
+.prow { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.btn.dismiss { color: var(--muted); }
+.btn.dismiss:hover:not(:disabled) { color: var(--ink); }
 .lane-head .t .mv, .room-head .mv { margin-left: 8px; vertical-align: middle; }
 .station .mv { justify-self: end; }
 .lane-head .t { display: flex; gap: 10px; align-items: baseline; min-width: 0; white-space: nowrap; }
@@ -305,6 +309,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
 </head>
 <body>
 <div class="notice" id="notice" role="status" hidden><div class="wrap" id="notice-text"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
 
 <header class="top">
   <div class="wrap">
@@ -316,6 +321,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       <nav class="seg" aria-label="Page"><a href="index.html">Board</a><a href="#connections" data-view="connections">Connections</a><a href="#workflow" data-view="workflow">Work flow</a><a href="#rooms" data-view="rooms">Rooms</a></nav>
       <button type="button" class="btn" id="arrange" aria-pressed="false" title="Move machines and sessions up or down; the order is kept in this browser">Arrange</button>
       <button type="button" class="btn link" id="arrange-reset" hidden>Reset order</button>
+      <button type="button" class="btn" id="restore" hidden>Restore dismissed</button>
       <span class="fine" id="stamp"></span>
     </div>
   </div>
@@ -476,6 +482,47 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     if (!r.ok) throw new Error("GitHub said " + r.status + " for " + path + " on " + ref);
     return b64decode((await r.json()).content);
   }
+  // ---- writing control.json (only for Dismiss / Restore; same file and method as the board page's Clear) ----------
+  function b64encode(text) { let bin = ""; new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); }
+  const KEEP_DISMISSED = 14 * DAY;
+  async function saveControl(mutate, message) {
+    const prune = (data) => { const cut = Date.now() - KEEP_DISMISSED; Object.keys(data.dismissed || {}).forEach((k) => { if (ms(data.dismissed[k].at) < cut) delete data.dismissed[k]; }); if (data.dismissed && !Object.keys(data.dismissed).length) delete data.dismissed; };
+    if (FIXTURE) { const data = JSON.parse(JSON.stringify(S.control)); mutate(data); prune(data); S.control = data; return; }  // offline sample: change it in memory only
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await gh("/contents/control.json?ref=board%2Fcontrol");
+      if (!r.ok) throw new Error("GitHub said " + r.status + " when reading control.json");
+      const j = await r.json(), data = JSON.parse(b64decode(j.content));
+      mutate(data); prune(data);
+      const w = await gh("/contents/control.json", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, content: b64encode(JSON.stringify(data, null, 1) + "\n"), sha: j.sha, branch: "board/control" }) });
+      if ((w.status === 409 || w.status === 422) && !attempt) continue;  // changed meanwhile: read again and redo
+      if (w.status === 403 || w.status === 404) throw new Error("this token can read the board but not write it (sign in on the Board page)");
+      if (!w.ok) throw new Error("GitHub said " + w.status + " when saving");
+      S.control = data; return;
+    }
+  }
+  let toastTimer = 0;
+  function toast(msg) { const el = $("toast"); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 6000); }
+  async function dismiss(sid) {
+    const d = S.model && S.model.desks.get(sid);
+    if (!d || S.saving) return;
+    if (!window.confirm("Dismiss \u201c" + d.name + "\u201d from the office?\n\nIt is hidden for everyone until this session does something new. Nothing on " + d.machine + " is stopped or changed.")) return;
+    S.saving = true; refresh();
+    try { await saveControl((data) => { (data.dismissed = data.dismissed || {})[sid] = { at: new Date(now()).toISOString(), for: d.lastTs || 0, name: d.name }; }, "Office: dismissed " + d.name);
+      if (S.sel === sid) S.sel = null; if (S.csel === "d:" + sid) S.csel = null; toast("Dismissed " + d.name + "."); }
+    catch (e) { toast("Couldn't dismiss: " + (e.message || e) + "."); }
+    S.saving = false; refresh();
+  }
+  async function restoreAll() {
+    const list = (S.model && S.model.dismissed) || [];
+    if (!list.length || S.saving) return;
+    S.saving = true; refresh();
+    try { await saveControl((data) => { list.forEach((x) => { if (data.dismissed) delete data.dismissed[x.sid]; }); }, "Office: restored " + list.length + " dismissed desk(s)"); toast("Restored " + list.length + " desk" + (list.length === 1 ? "" : "s") + "."); }
+    catch (e) { toast("Couldn't restore: " + (e.message || e) + "."); }
+    S.saving = false; refresh();
+  }
+  const dismissBtn = (d) => h("button", { type: "button", class: "btn dismiss", "data-dismiss": d.sid, "data-k": "dismiss:" + d.sid, disabled: S.saving ? true : null,
+    title: "Hide this desk for everyone until the session does something new. It doesn't stop the session." }, "Dismiss from the office");
   // One conditional request for all board/* branch heads (a 304 costs nothing); only branches that moved are downloaded.
   let refsTag = null, heads = {}, queueTag = null;
   async function loadLive() {
@@ -607,7 +654,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       h("div", { class: "panel-head" }, h("div", null, h("h3", null, d.name), h("div", { class: "desk-meta mono" }, (d.repo || "no repo") + " · " + d.machine + " · " + d.sid.slice(0, 8) + " · seen " + ago(d.lastTs))),
         h("button", { type: "button", class: "btn", "data-close": "1", "aria-label": "Close the panel" }, "Close")),
       h("div", { class: "fine" }, d.subs.length + " helper" + (d.subs.length === 1 ? "" : "s") + " (" + running + " running) · " + d.sent + " message" + (d.sent === 1 ? "" : "s") + " sent · " + d.vault + " vault write" + (d.vault === 1 ? "" : "s") + " in 24 h" + (got.length ? " · got messages from " + got.join(", ") : "")),
-      url ? h("a", { class: "btn link", href: url, target: "_blank", rel: "noopener" }, "Open session") : null,
+      h("div", { class: "prow" }, url ? h("a", { class: "btn link", href: url, target: "_blank", rel: "noopener" }, "Open session") : null, dismissBtn(d)),
       d.jobs.length ? [h("h4", null, "Board jobs"), d.jobs.map((j) => jobEl(j, d))] : null,
       h("h4", null, evs.length ? "Last " + evs.length + " events, newest first" : "Events"),
       evs.length ? h("ol", { class: "evs" }, evs.map((ev) => h("li", { class: /^subagent_(launched|begin)$/.test(ev.ev) ? "quiet" : "" }, h("time", null, hhmm(ms(ev.ts))), h("span", null, words(ev, d)))))
@@ -757,6 +804,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       const msgs = C.edges.filter((x) => x.type === "msg" && x.ends.includes(n.id)).flatMap((x) => x.msgs).filter((m) => !d || !d.ev.some((ev) => ev.ev === "message" && OfficeModel.ms(ev.ts) === m.ts && m.from === n.id)).sort((a, b) => b.ts - a.ts);
       const note = n.elsewhere ? "Known only from a message to this name. It has no machine or session here." : n.untraced ? "This machine does not trace sessions. The session is known from its board job" + (n.aliases.length ? ", and its name from messages to " + n.aliases.map((a) => "'" + a + "'").join(", ") : "") + "." : "";
       return { title: n.name, sub: [n.repo || "no repo", n.machine, n.sid ? n.sid.slice(0, 8) : "", isNaN(n.lastTs) ? "" : "seen " + ago(n.lastTs)].filter(Boolean).join(" · "), body: [
+        d ? h("div", null, dismissBtn(d)) : null,
         note ? h("p", { class: "fine" }, note) : null,
         n.vault ? h("p", null, "Vault: " + n.vault.n + " write" + (n.vault.n === 1 ? "" : "s") + " (" + Object.entries(n.vault.ops).map(([k, c]) => c + " " + k).join(", ") + "), last " + ago(n.vault.last) + ".") : null,
         d && d.jobs.length ? [h("h4", null, "Board jobs"), d.jobs.map((j) => jobEl(j, d))] : null,
@@ -868,6 +916,8 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     const M = (S.model = derive());
     if (S.want) { const w = S.want.toLowerCase(), d = M.list.find((x) => x.name.toLowerCase() === w || x.sid.toLowerCase() === w); if (d) S.sel = d.sid; S.want = null; }
     if (S.sel && !M.desks.has(S.sel)) S.sel = null;
+    const rb = $("restore"), nd = M.dismissed.length;
+    rb.hidden = !nd; rb.disabled = !!S.saving; rb.textContent = "Restore dismissed (" + nd + ")"; rb.title = M.dismissed.map((x) => x.name + " on " + x.machine).join(", ");
     const ms_ = machines(), syncing = ms_.filter((m) => S.states[m.id] && now() - ms(S.states[m.id].at) <= SYNC_SILENT).length;
     $("summary").replaceChildren(...[["Sessions", M.list.length, ""], ["Helpers running", M.running, M.running ? "hot" : ""], ["Messages · 24 h", M.msgs, ""],
       ["Vault writes · 24 h", M.vault.total, M.vault.glow.length ? "hot" : ""], ["PCs syncing", syncing + " / " + ms_.length, ""]]
@@ -932,6 +982,12 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     else S.order.sessions = OfficeModel.mergeOrder(S.order.sessions, keys);
     saveOrder(); refresh();
   }, true);
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest && e.target.closest("[data-dismiss]");
+    if (!t || !$("office").contains(t)) return;
+    e.stopPropagation(); dismiss(t.dataset.dismiss);
+  }, true);
+  $("restore").addEventListener("click", restoreAll);
   $("arrange").addEventListener("click", () => { S.arrange = !S.arrange; $("arrange").setAttribute("aria-pressed", String(S.arrange)); $("arrange-reset").hidden = !S.arrange; refresh(); });
   $("arrange-reset").addEventListener("click", () => { S.order = { machines: [], sessions: [] }; saveOrder(); refresh(); });
   $("only-path").addEventListener("change", (e) => { S.onlyPath = e.target.checked; $("fstages").classList.toggle("only-path", S.onlyPath && !!(S.flow && S.flow.question)); requestAnimationFrame(drawDeps); });

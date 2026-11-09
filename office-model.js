@@ -1,6 +1,7 @@
 /* Agent office model: pure functions, no DOM, no network, no globals.
    OfficeModel.derive({control, states, now}) -> desks, helper subagents, message pairs, vault writes
    OfficeModel.parseQueue(md) -> the A100 queue items (columns found by header name)
+   control.dismissed hides a desk until its session does something new (Dismiss on the page)
    OfficeModel.orderBy / moveKey / mergeOrder -> the viewer's own order of machines and sessions (Arrange)
    Loaded by office.html and, in tests, by a plain page under headless Chrome. */
 (function (root) {
@@ -98,6 +99,14 @@
         else d.out.push(ev);
       } else if (ev.ev === "vault_write") { d.vault++; d.vaultLast = ts; vaultTotal++; d.ops[ev.op || "?"] = (d.ops[ev.op || "?"] || 0) + 1; ops[ev.op || "?"] = (ops[ev.op || "?"] || 0) + 1; }
     });
+    // desks the owner dismissed on the office page (control.dismissed[sid] = {at, for: the desk's last activity then}):
+    // hidden for everyone until the session shows activity newer than that
+    const dis = (control && control.dismissed) || {}, dismissed = [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const d = list[i], x = dis[d.sid];
+      if (x && !((d.lastTs || 0) > (Number(x.for) || 0))) { dismissed.push({ sid: d.sid, name: d.name, machine: d.machine, traced: d.traced }); desks.delete(d.sid); list.splice(i, 1); }
+    }
+    [...pairs.keys()].forEach((k) => { const p = pairs.get(k); if (!desks.has(p.from) || !desks.has(p.to)) pairs.delete(k); });
     let running = 0;
     list.forEach((d) => {
       d.lastTs = d.lastTs || NaN;
@@ -107,7 +116,7 @@
     });
     const byMachine = {};
     list.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).forEach((d) => { (byMachine[d.machine] = byMachine[d.machine] || []).push(d); });
-    return { desks, list, byMachine, orphans, arcs: [...pairs.values()], msgs, running, vault: { total: vaultTotal, ops, glow: list.filter((d) => d.glow).sort((a, b) => b.vaultLast - a.vaultLast) } };
+    return { desks, list, byMachine, orphans, dismissed: dismissed.reverse(), arcs: [...pairs.values()], msgs, running, vault: { total: vaultTotal, ops, glow: list.filter((d) => d.glow).sort((a, b) => b.vaultLast - a.vaultLast) } };
   }
 
   // The viewer's arrangement (user 2026-11-09). `order` is a list of keys; listed items come first in that order,
