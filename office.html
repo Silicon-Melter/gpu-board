@@ -173,7 +173,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .clayout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 40px; }
 .cscroll { overflow-x: auto; padding-bottom: 6px; }
 .diagram { position: relative; }
-.diagram svg.edges { position: absolute; inset: 0; overflow: visible; }
+.diagram svg.edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }  /* only the .hit paths take clicks; the layer must not cover the lane heads */
 .lane { position: absolute; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .lane-head { position: absolute; left: 12px; right: 12px; top: 8px; display: grid; gap: 3px; }
 /* Arrange: the viewer's own order of machines and sessions (kept in this browser) */
