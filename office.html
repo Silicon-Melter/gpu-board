@@ -176,6 +176,15 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .diagram svg.edges { position: absolute; inset: 0; overflow: visible; }
 .lane { position: absolute; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .lane-head { position: absolute; left: 12px; right: 12px; top: 8px; display: grid; gap: 3px; }
+/* Arrange: the viewer's own order of machines and sessions (kept in this browser) */
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.mv { display: inline-flex; gap: 2px; }
+.mv button { min-width: 26px; height: 24px; padding: 0 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 6px; font-size: 12px; line-height: 1; }
+.mv button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.mv button:disabled { opacity: .35; }
+.mv-node { position: absolute; z-index: 3; }
+.lane-head .t .mv, .room-head .mv { margin-left: 8px; vertical-align: middle; }
+.station .mv { justify-self: end; }
 .lane-head .t { display: flex; gap: 10px; align-items: baseline; min-width: 0; white-space: nowrap; }
 .lane-head .t .fine { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .lane-head h3 { flex: none; font-family: var(--display); font-stretch: 85%; font-size: 17px; font-weight: 700; }
@@ -305,6 +314,8 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     </div>
     <div class="controls">
       <nav class="seg" aria-label="Page"><a href="index.html">Board</a><a href="#connections" data-view="connections">Connections</a><a href="#workflow" data-view="workflow">Work flow</a><a href="#rooms" data-view="rooms">Rooms</a></nav>
+      <button type="button" class="btn" id="arrange" aria-pressed="false" title="Move machines and sessions up or down; the order is kept in this browser">Arrange</button>
+      <button type="button" class="btn link" id="arrange-reset" hidden>Reset order</button>
       <span class="fine" id="stamp"></span>
     </div>
   </div>
@@ -387,14 +398,31 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
   };
+  function readOrder() {  // {machines: [ids], sessions: [sids or node ids]}; anything unreadable means the default order
+    try { const o = JSON.parse(store.get("office.order") || "null"); return { machines: Array.isArray(o && o.machines) ? o.machines.map(String) : [], sessions: Array.isArray(o && o.sessions) ? o.sessions.map(String) : [] }; }
+    catch (e) { return { machines: [], sessions: [] }; }
+  }
   let auth = null; // a signed-in token's refresh token and expiry (written by the board page); null for a pasted token
   try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, queue: null, loading: false,
-    sel: null, want: params.get("select"), more: {}, model: null, fixedNow: null, view: "connections", fsel: null, onlyPath: false, question: null, csel: null, cmore: {}, conn: null };
+    sel: null, want: params.get("select"), more: {}, model: null, fixedNow: null, view: "connections", fsel: null, onlyPath: false, question: null, csel: null, cmore: {}, conn: null,
+    arrange: false, order: readOrder() };
   const $ = (id) => document.getElementById(id);
   const now = () => (S.fixedNow != null ? S.fixedNow : Date.now());
   const ms = OfficeModel.ms;
-  const machines = () => OfficeModel.machines(S.control);
+  const machines = () => OfficeModel.orderBy(OfficeModel.machines(S.control), (m) => m.id, S.order.machines);
+  // ▲▼ for one item while arranging: kind "m" (machine) or "s" (session, within `group` = its machine or lane)
+  function mvEl(kind, key, group, keys, name) {
+    if (!S.arrange) return null;
+    const i = keys.indexOf(key), b = (d, sym, word) => h("button", { type: "button", "data-mv": kind, "data-mv-key": key, "data-mv-group": group, "data-mv-d": String(d), "data-k": "mv:" + kind + ":" + key + ":" + d,
+      "aria-label": "Move " + name + " " + word, disabled: (d < 0 ? i <= 0 : i < 0 || i >= keys.length - 1) ? "" : null }, sym);
+    return h("span", { class: "mv" }, b(-1, "▲", "up"), b(1, "▼", "down"));
+  }
+  function groupKeys(kind, group) {  // the keys of a group as shown now
+    if (kind === "m") return machines().map((m) => m.id);
+    if (S.view === "connections" && S.conn) return Object.values(S.conn.nodes).filter((n) => n.kind === "lead" && n.lane === group).sort((a, b) => a.y - b.y).map((n) => n.sid || n.id);
+    return OfficeModel.orderBy((S.model && S.model.byMachine[group]) || [], (d) => d.sid, S.order.sessions).map((d) => d.sid);
+  }
   const sessionUrl = (s) => (/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(String(s || "")) ? s : null);
 
   // DOM builders: text only ever goes in as text nodes or attribute values, never as markup
@@ -503,7 +531,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       h("div", { class: "m" }, [s.type || s.atype, shortModel(s.model)].filter(Boolean).join(" · ")),
       h("div", null, pill(st === "done" ? "done" : st === "running" ? "running" : "stale", st === "stale" ? "no stop seen" : st), s.tok != null && !isNaN(s.tok) ? h("span", { class: "tok" }, fmtTok(s.tok) + " tokens") : null));
   }
-  function stationEl(d) {
+  function stationEl(d, mv) {
     const live = d.jobs.filter((j) => j.state !== "done"), finished = d.jobs.length - live.length;
     const open = S.more[d.sid], shown = open ? d.subs : d.subs.slice(0, SUB_MAX), hidden = d.subs.length - SUB_MAX;
     const age = now() - d.lastTs;
@@ -515,7 +543,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       finished ? h("div", { class: "out" }, "+" + finished + " finished job" + (finished > 1 ? "s" : "")) : null,
       d.out.length > 3 ? h("div", { class: "out" }, "+" + (d.out.length - 3) + " earlier messages (open the desk)") : null,
       d.out.slice(-3).map((ev) => h("div", { class: "out" }, "→ " + (ev.to || "?") + (ev.summary ? ": " + ev.summary : ""))));
-    return h("div", { class: "station" }, desk, d.subs.length ? h("div", { class: "subs", "aria-label": "Helper agents of " + d.name }, shown.map(subEl),
+    return h("div", { class: "station" }, mv || null, desk, d.subs.length ? h("div", { class: "subs", "aria-label": "Helper agents of " + d.name }, shown.map(subEl),
       hidden > 0 ? h("button", { type: "button", class: "more", "data-more": d.sid, "data-k": "more:" + d.sid }, open ? "show fewer" : "+" + hidden + " more") : null) : null);
   }
   function gearOf(m, t) {  // the temperature / load / memory chips of one machine
@@ -528,14 +556,15 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   function roomEl(m, M) {
     const t = S.states[m.id] ? { st: S.states[m.id], silent: now() - ms(S.states[m.id].at) > SYNC_SILENT } : null;
     const gear = gearOf(m, t);
-    const mine = M.byMachine[m.id] || [], orph = M.orphans[m.id] || [];
+    const mine = OfficeModel.orderBy(M.byMachine[m.id] || [], (d) => d.sid, S.order.sessions), orph = M.orphans[m.id] || [];
+    const mkeys = machines().map((x) => x.id), skeys = mine.map((d) => d.sid);
     return h("article", { class: "room " + (m.status === "available" ? "available" : "on_hold") },
       h("div", { class: "room-head" },
-        h("div", null, h("h3", null, m.name || m.id), h("div", { class: "sub-line mono" }, m.id + (m.spec ? " · " + m.spec : ""))),
+        h("div", null, h("h3", null, m.name || m.id, mvEl("m", m.id, "", mkeys, m.name || m.id)), h("div", { class: "sub-line mono" }, m.id + (m.spec ? " · " + m.spec : ""))),
         h("span", { class: "status " + (m.status === "available" ? "available" : "on_hold") }, m.status === "available" ? "Available" : "On hold"),
         h("div", { class: "gear" }, gear, h("span", { class: "reading" + (t && t.silent ? " old" : "") }, !t ? "No sync from this PC yet." : t.silent ? "Sync silent since " + ago(ms(t.st.at)) : "Synced " + ago(ms(t.st.at))))),
       h("div", { class: "floor" },
-        mine.length ? mine.map(stationEl) : h("div", { class: "none" }, "No agent session seen here in the last 24 h."),
+        mine.length ? mine.map((d) => stationEl(d, mvEl("s", d.sid, m.id, skeys, d.name))) : h("div", { class: "none" }, "No agent session seen here in the last 24 h."),
         orph.length ? h("div", { class: "desk ghost" }, h("div", { class: "desk-meta" }, "Jobs with no known session"), orph.filter((j) => j.state !== "done").map((j) => jobEl(j, { machine: m.id }))) : null));
   }
   function vaultEl(M) {
@@ -665,11 +694,12 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     dg.style.width = C.W + "px"; dg.style.height = C.H + "px";
     const under = [h("div", { class: "shared-band", style: "left:0;top:20px;width:" + (C.nodes.vault.w + 12) + "px;height:" + (C.H - 24) + "px" }, h("span", { class: "lbl", style: "left:10px;top:4px" }, "Shared"))];
     [["Sessions", OfficeFlow.X.lead + 2], ["What they started", OfficeFlow.X.kid + 2], ["Messages", OfficeFlow.X.lane + 8]].forEach(([t, x]) => under.push(h("span", { class: "col-lbl", style: "left:" + x + "px;top:2px" }, t)));
+    const mkeys = machines().map((x) => x.id);
     C.lanes.forEach((ln) => {
       const m = (S.control.machines || []).find((x) => x.id === ln.id), t = m && stateOf(m);
       under.push(h("div", { class: "lane", style: "left:" + ln.x + "px;top:" + ln.top + "px;width:" + ln.w + "px;height:" + (ln.bottom - ln.top) + "px" },
         h("div", { class: "lane-head", style: "left:" + (OfficeFlow.X.lead - ln.x) + "px" },
-          h("div", { class: "t" }, h("h3", null, ln.name), h("span", { class: "mono fine" }, [ln.id, ln.spec, !m ? "" : !t ? "no sync yet" : (t.silent ? "sync silent since " : "synced ") + ago(ms(t.st.at))].filter(Boolean).join(" · "))),
+          h("div", { class: "t" }, h("h3", null, ln.name, m ? mvEl("m", ln.id, "", mkeys, ln.name) : null), h("span", { class: "mono fine" }, [ln.id, ln.spec, !m ? "" : !t ? "no sync yet" : (t.silent ? "sync silent since " : "synced ") + ago(ms(t.st.at))].filter(Boolean).join(" · "))),
           m ? h("div", { class: "cgear" }, gearOf(m, t)) : null)));
     });
     const svg = sv("svg", { class: "edges", width: C.W, height: C.H, viewBox: "0 0 " + C.W + " " + C.H, "aria-hidden": "true" }), defs = sv("defs"), vis = sv("g"), hits = sv("g"), motion = motionOk();
@@ -684,7 +714,14 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       hits.append(sv("path", { d: e.d, class: "hit", "data-edge": e.id, tabindex: "0", role: "button", "data-k": "edge:" + e.id, "aria-label": connEdgeTitle(C, e) }, sv("title", null, connEdgeTitle(C, e))));
     });
     svg.append(vis, hits);
-    dg.replaceChildren(...under, svg, ...Object.values(C.nodes).map((n) => connNode(C, n, M)));
+    const leads = Object.values(C.nodes).filter((n) => n.kind === "lead");
+    const overlays = !S.arrange ? [] : leads.map((n) => {
+      const keys = leads.filter((x) => x.lane === n.lane).sort((a, b) => a.y - b.y).map((x) => x.sid || x.id);
+      const el = mvEl("s", n.sid || n.id, n.lane, keys, n.name);
+      el.classList.add("mv-node"); el.style.left = (n.x + n.w - 60) + "px"; el.style.top = (n.y + 6) + "px";
+      return el;
+    });
+    dg.replaceChildren(...under, svg, ...Object.values(C.nodes).map((n) => connNode(C, n, M)), ...overlays);
   }
   function connList(C) {
     const nm = (id) => C.nodes[id].name || id;
@@ -734,7 +771,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     return { title: "You", sub: "the owner", body: [h("p", null, "Not traced today. You dispatch the A100 queue by a standing rule; nothing here shows your Go ahead or Wait answers.")] };
   }
   function renderConn(M) {
-    const C = (S.conn = OfficeFlow.connections(M, { machines: machines(), queue: S.queue, now: now(), expanded: Object.keys(S.cmore).filter((k) => S.cmore[k]) }));
+    const C = (S.conn = OfficeFlow.connections(M, { machines: machines(), queue: S.queue, now: now(), expanded: Object.keys(S.cmore).filter((k) => S.cmore[k]), order: S.order.sessions }));
     if (S.csel && !C.nodes[S.csel] && !C.edges.some((e) => e.id === S.csel)) S.csel = null;
     const st = C.stats;
     $("csummary").replaceChildren(...[["Sessions", st.sessions, ""], ["Not traced", st.untraced, ""], ["Helpers running", st.helpersRunning, st.helpersRunning ? "hot" : ""], ["Messages · 24 h", st.messages, ""],
@@ -884,6 +921,19 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     const el = S.fsel && [...document.querySelectorAll(".fcard")].find((x) => x.dataset.card === S.fsel);
     if (el) el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: motionOk() ? "smooth" : "auto" });
   });
+  function saveOrder() { store.set("office.order", S.order.machines.length || S.order.sessions.length ? JSON.stringify(S.order) : null); }
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest && e.target.closest("[data-mv]");
+    if (!t || !$("office").contains(t) || t.disabled) return;
+    e.stopPropagation();
+    const kind = t.dataset.mv, key = t.dataset.mvKey, d = Number(t.dataset.mvD);
+    const keys = OfficeModel.moveKey(groupKeys(kind, t.dataset.mvGroup), key, d);
+    if (kind === "m") S.order.machines = OfficeModel.mergeOrder(S.order.machines, keys);
+    else S.order.sessions = OfficeModel.mergeOrder(S.order.sessions, keys);
+    saveOrder(); refresh();
+  }, true);
+  $("arrange").addEventListener("click", () => { S.arrange = !S.arrange; $("arrange").setAttribute("aria-pressed", String(S.arrange)); $("arrange-reset").hidden = !S.arrange; refresh(); });
+  $("arrange-reset").addEventListener("click", () => { S.order = { machines: [], sessions: [] }; saveOrder(); refresh(); });
   $("only-path").addEventListener("change", (e) => { S.onlyPath = e.target.checked; $("fstages").classList.toggle("only-path", S.onlyPath && !!(S.flow && S.flow.question)); requestAnimationFrame(drawDeps); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && S.view === "workflow" && S.fsel) { S.fsel = null; refresh(); return; }

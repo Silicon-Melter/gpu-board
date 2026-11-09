@@ -1,5 +1,6 @@
 /* Agent office flow views: pure layout and analysis, no DOM, no network, no globals besides OfficeModel.
-   OfficeFlow.connections(M, {machines, queue, now, expanded, states}) -> {W, H, lanes, nodes, edges, stats}
+   OfficeFlow.connections(M, {machines, queue, now, expanded, states, order}) -> {W, H, lanes, nodes, edges, stats}
+     (order: the viewer's session order, keys = sid or the untraced node id; machines come already ordered)
    OfficeFlow.workflow(M, {queue, jobs, events, question, now}) -> {stages, cards, deps, attention, question}
    Everything is computed from the model (OfficeModel.derive) and the parsed queue; nothing is hand-written. */
 (function (root) {
@@ -94,7 +95,8 @@
     let y = 26;
     laneDefs.forEach((ln) => {
       const top = y; y += HEAD;
-      const leads = [...leadOf.values()].filter((l) => (known.has(l.machine) ? l.machine : "elsewhere") === ln.id).sort((p, q) => (p.untraced - q.untraced) || byText((l) => l.name.toLowerCase())(p, q));
+      const leads = OM.orderBy([...leadOf.values()].filter((l) => (known.has(l.machine) ? l.machine : "elsewhere") === ln.id).sort((p, q) => (p.untraced - q.untraced) || byText((l) => l.name.toLowerCase())(p, q)),
+        (l) => l.sid || l.id, opts.order);
       leads.forEach((l, i) => {
         const kids = l.d ? kidsOf(l.d, now, opts) : [], kh = kids.length ? kids.length * PITCH - (PITCH - KID_H) : 0, block = Math.max(kh, LEAD_H);
         nodes[l.id] = Object.assign({}, l, { d: undefined, x: X.lead, y: y + (block - LEAD_H) / 2, w: X.leadW, h: LEAD_H, lane: ln.id });

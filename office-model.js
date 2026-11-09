@@ -1,6 +1,7 @@
 /* Agent office model: pure functions, no DOM, no network, no globals.
    OfficeModel.derive({control, states, now}) -> desks, helper subagents, message pairs, vault writes
    OfficeModel.parseQueue(md) -> the A100 queue items (columns found by header name)
+   OfficeModel.orderBy / moveKey / mergeOrder -> the viewer's own order of machines and sessions (Arrange)
    Loaded by office.html and, in tests, by a plain page under headless Chrome. */
 (function (root) {
   "use strict";
@@ -109,7 +110,24 @@
     return { desks, list, byMachine, orphans, arcs: [...pairs.values()], msgs, running, vault: { total: vaultTotal, ops, glow: list.filter((d) => d.glow).sort((a, b) => b.vaultLast - a.vaultLast) } };
   }
 
-  const api = { MIN, HR, DAY, GLOW, SUB_STALE, ms, shortModel, plain, machines: machinesOf, parseQueue, derive, subStart, subState };
+  // The viewer's arrangement (user 2026-11-09). `order` is a list of keys; listed items come first in that order,
+  // the rest keep their default order after them (so a new session or machine shows up at the end of its group).
+  function orderBy(list, keyOf, order) {
+    const at = new Map((order || []).map((k, i) => [k, i]));
+    return list.map((x, i) => ({ x, i, r: at.has(keyOf(x)) ? at.get(keyOf(x)) : Infinity }))
+      .sort((a, b) => (a.r - b.r) || (a.i - b.i)).map((o) => o.x);
+  }
+  // Move `key` by delta (-1 up, +1 down) within the keys as shown; out of range or unknown -> unchanged copy.
+  function moveKey(keys, key, delta) {
+    const a = keys.slice(), i = a.indexOf(key), j = i + delta;
+    if (i < 0 || j < 0 || j >= a.length) return a;
+    [a[i], a[j]] = [a[j], a[i]];
+    return a;
+  }
+  // A group's new order in front, every other stored key after it in its old order (other groups keep theirs).
+  const mergeOrder = (order, group) => group.concat((order || []).filter((k) => !group.includes(k)));
+
+  const api = { MIN, HR, DAY, GLOW, SUB_STALE, ms, shortModel, plain, machines: machinesOf, parseQueue, derive, subStart, subState, orderBy, moveKey, mergeOrder };
   root.OfficeModel = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
