@@ -68,8 +68,10 @@
         const d = mk(j.session_id, m.id); d.repo = d.repo || j.repo || ""; d.jobs.push(job); d.lastTs = Math.max(d.lastTs, ms(j.updated) || 0);
       });
     });
+    const named = {};  // Remote Control names the machines publish, for desks known only from a board job
+    machines().forEach((m) => { const n = states[m.id] && states[m.id].agents && states[m.id].agents.names; if (n && typeof n === "object") Object.assign(named, n); });
     const list = [...desks.values()];
-    list.forEach((d) => { d.name = d.name || (d.repo || "session") + " " + d.sid.slice(0, 8); });
+    list.forEach((d) => { d.name = d.name || (typeof named[d.sid] === "string" && named[d.sid]) || (d.repo || "session") + " " + d.sid.slice(0, 8); });
     const byName = new Map();
     list.forEach((d) => byName.set(d.sid.toLowerCase(), d));
     list.forEach((d) => byName.set(d.name.toLowerCase(), d));  // names win over ids
