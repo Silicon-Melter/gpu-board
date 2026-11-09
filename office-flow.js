@@ -1,5 +1,6 @@
 /* Agent office flow views: pure layout and analysis, no DOM, no network, no globals besides OfficeModel.
-   OfficeFlow.connections(M, {machines, queue, now, expanded, states, order}) -> {W, H, lanes, nodes, edges, stats}
+   OfficeFlow.connections(M, {machines, queue, now, expanded, states, order, showFinished}) -> {W, H, lanes, nodes, edges, stats}
+     (showFinished false: done/stale helpers and done jobs are left out; each lead's `hidden` counts them)
      (order: the viewer's session order, keys = sid or the untraced node id; machines come already ordered)
    OfficeFlow.workflow(M, {queue, jobs, events, question, now}) -> {stages, cards, deps, attention, question}
    Everything is computed from the model (OfficeModel.derive) and the parsed queue; nothing is hand-written. */
@@ -25,9 +26,12 @@
   const byText = (f) => (a, b) => (f(a) < f(b) ? -1 : f(a) > f(b) ? 1 : 0);
   const JOB_ORDER = { running: 0, paused: 1, queued: 2, blocked: 3, failed: 4, done: 5 };
 
+  // finished = a helper not running (done, or no stop seen for 6 h) and a job that is done; failed jobs always show
+  const finishedSub = (s, now) => OM.subState(s, now) !== "running";
+  function finishedOf(d, now) { return d.subs.filter((s) => finishedSub(s, now)).length + d.jobs.filter((j) => j.state === "done").length; }
   function kidsOf(d, now, opts) {
-    const groups = new Map();
-    d.subs.forEach((s) => { const k = modelLabel(s.model); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); });
+    const groups = new Map(), all = !!opts.showFinished;
+    d.subs.filter((s) => all || !finishedSub(s, now)).forEach((s) => { const k = modelLabel(s.model); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); });
     const kids = [...groups.entries()].sort(byText((g) => g[0])).map(([label, subs]) => {
       const running = subs.filter((s) => OM.subState(s, now) === "running").length;
       const tok = subs.reduce((n, s) => n + (s.tok != null && !isNaN(s.tok) ? s.tok : 0), 0);
@@ -37,7 +41,7 @@
       });
       return { kind: "helpers", id: "k:" + d.sid + ":h:" + label, lead: "d:" + d.sid, label, count: subs.length, running, tok, items };
     });
-    const jobs = d.jobs.slice().sort((a, b) => (JOB_ORDER[a.state] ?? 9) - (JOB_ORDER[b.state] ?? 9) || (a.id < b.id ? -1 : 1));
+    const jobs = d.jobs.filter((j) => all || j.state !== "done").sort((a, b) => (JOB_ORDER[a.state] ?? 9) - (JOB_ORDER[b.state] ?? 9) || (a.id < b.id ? -1 : 1));
     jobs.forEach((j) => {
       const away = j.machine !== d.machine;
       kids.push({ kind: "job", id: "k:" + d.sid + ":j:" + j.id, lead: "d:" + d.sid, job: { id: j.id, task: j.task || j.id, state: j.state, pct: Number(j.pct) || 0, res: j.res || "", machine: j.machine, progress: j.progress || "", eta: j.eta || "", result: j.result || "", updated: OM.ms(j.updated) },
@@ -62,7 +66,8 @@
     const deskLead = (d) => {
       const sent = 0;
       return { id: "d:" + d.sid, sid: d.sid, kind: "lead", name: d.name, repo: d.repo, machine: d.machine, lastTs: d.lastTs, untraced: !d.traced,
-        glow: !!d.vaultLast && now - d.vaultLast <= GLOW, vault: d.vault ? { n: d.vault, ops: Object.assign({}, d.ops), last: d.vaultLast } : null, aliases: [], sent, got: 0, d };
+        glow: !!d.vaultLast && now - d.vaultLast <= GLOW, vault: d.vault ? { n: d.vault, ops: Object.assign({}, d.ops), last: d.vaultLast } : null, aliases: [], sent, got: 0, d,
+        hidden: opts.showFinished ? 0 : finishedOf(d, now) };
     };
     M.list.forEach((d) => leadOf.set("d:" + d.sid, deskLead(d)));
     const untracedIn = (mid) => [...leadOf.values()].filter((l) => l.untraced && l.machine === mid);

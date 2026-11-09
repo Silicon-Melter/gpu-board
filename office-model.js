@@ -69,11 +69,17 @@
       });
     });
     const named = {};  // Remote Control names the machines publish, for desks known only from a board job
-    machines().forEach((m) => { const n = states[m.id] && states[m.id].agents && states[m.id].agents.names; if (n && typeof n === "object") Object.assign(named, n); });
+    const addrs = {};  // sid -> the uds:/bridge: addresses messages may name it by
+    machines().forEach((m) => {
+      const ag = states[m.id] && states[m.id].agents;
+      if (ag && ag.names && typeof ag.names === "object") Object.assign(named, ag.names);
+      if (ag && ag.addrs && typeof ag.addrs === "object") Object.entries(ag.addrs).forEach(([k, v]) => { if (Array.isArray(v)) addrs[k] = v.filter((a) => typeof a === "string"); });
+    });
     const list = [...desks.values()];
     list.forEach((d) => { d.name = d.name || (typeof named[d.sid] === "string" && named[d.sid]) || (d.repo || "session") + " " + d.sid.slice(0, 8); });
     const byName = new Map();
     list.forEach((d) => byName.set(d.sid.toLowerCase(), d));
+    list.forEach((d) => (addrs[d.sid] || []).forEach((a) => byName.set(a.toLowerCase(), d)));
     list.forEach((d) => byName.set(d.name.toLowerCase(), d));  // names win over ids
 
     // a helper desk joins its events by tool_use_id (start, launched) and by child id (launched, begin, stop), in either order
@@ -109,6 +115,11 @@
       if (x && !((d.lastTs || 0) > (Number(x.for) || 0))) { dismissed.push({ sid: d.sid, name: d.name, machine: d.machine, traced: d.traced }); desks.delete(d.sid); list.splice(i, 1); }
     }
     [...pairs.keys()].forEach((k) => { const p = pairs.get(k); if (!desks.has(p.from) || !desks.has(p.to)) pairs.delete(k); });
+    if (dismissed.length) {  // counts cover the desks shown, so the header agrees with the Vault box
+      vaultTotal = list.reduce((n, d) => n + d.vault, 0); msgs = list.reduce((n, d) => n + d.sent, 0);
+      Object.keys(ops).forEach((k) => delete ops[k]);
+      list.forEach((d) => Object.entries(d.ops).forEach(([k, n]) => { ops[k] = (ops[k] || 0) + n; }));
+    }
     let running = 0;
     list.forEach((d) => {
       d.lastTs = d.lastTs || NaN;

@@ -322,6 +322,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       <button type="button" class="btn" id="arrange" aria-pressed="false" title="Move machines and sessions up or down; the order is kept in this browser">Arrange</button>
       <button type="button" class="btn link" id="arrange-reset" hidden>Reset order</button>
       <button type="button" class="btn" id="restore" hidden>Restore dismissed</button>
+      <button type="button" class="btn" id="show-finished" aria-pressed="false" title="Show helpers and jobs that have finished (failed jobs always show)">Show finished</button>
       <span class="fine" id="stamp"></span>
     </div>
   </div>
@@ -412,7 +413,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
   const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, queue: null, loading: false,
     sel: null, want: params.get("select"), more: {}, model: null, fixedNow: null, view: "connections", fsel: null, onlyPath: false, question: null, csel: null, cmore: {}, conn: null,
-    arrange: false, order: readOrder() };
+    arrange: false, order: readOrder(), showFinished: store.get("office.showFinished") === "1" };
   const $ = (id) => document.getElementById(id);
   const now = () => (S.fixedNow != null ? S.fixedNow : Date.now());
   const ms = OfficeModel.ms;
@@ -580,7 +581,8 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   }
   function stationEl(d, mv) {
     const live = d.jobs.filter((j) => j.state !== "done"), finished = d.jobs.length - live.length;
-    const open = S.more[d.sid], shown = open ? d.subs : d.subs.slice(0, SUB_MAX), hidden = d.subs.length - SUB_MAX;
+    const subs = S.showFinished ? d.subs : d.subs.filter((s) => subState(s) === "running"), doneSubs = d.subs.length - subs.length;
+    const open = S.more[d.sid], shown = open ? subs : subs.slice(0, SUB_MAX), hidden = subs.length - SUB_MAX;
     const age = now() - d.lastTs;
     const desk = h("div", { class: "desk" + (d.glow ? " glow" : ""), role: "button", tabindex: "0", "data-k": "desk:" + d.sid, "data-sid": d.sid, "aria-pressed": String(S.sel === d.sid), "aria-label": "Session " + d.name },
       h("div", { class: "desk-top" }, h("span", { class: "dot " + (age < 10 * MIN ? "live" : age < 2 * HR ? "warm" : "") }), h("span", { class: "desk-name" }, d.name),
@@ -588,9 +590,10 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
       h("div", { class: "desk-meta mono" }, (d.repo || "no repo") + " · seen " + ago(d.lastTs)),
       live.map((j) => jobEl(j, d)),
       finished ? h("div", { class: "out" }, "+" + finished + " finished job" + (finished > 1 ? "s" : "")) : null,
+      doneSubs ? h("div", { class: "out" }, "+" + doneSubs + " finished helper" + (doneSubs > 1 ? "s" : "")) : null,
       d.out.length > 3 ? h("div", { class: "out" }, "+" + (d.out.length - 3) + " earlier messages (open the desk)") : null,
       d.out.slice(-3).map((ev) => h("div", { class: "out" }, "→ " + (ev.to || "?") + (ev.summary ? ": " + ev.summary : ""))));
-    return h("div", { class: "station" }, mv || null, desk, d.subs.length ? h("div", { class: "subs", "aria-label": "Helper agents of " + d.name }, shown.map(subEl),
+    return h("div", { class: "station" }, mv || null, desk, subs.length ? h("div", { class: "subs", "aria-label": "Helper agents of " + d.name }, shown.map(subEl),
       hidden > 0 ? h("button", { type: "button", class: "more", "data-more": d.sid, "data-k": "more:" + d.sid }, open ? "show fewer" : "+" + hidden + " more") : null) : null);
   }
   function gearOf(m, t) {  // the temperature / load / memory chips of one machine
@@ -703,7 +706,8 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
         h("div", { class: "nm" }, h("span", { class: "dot " + (age < 10 * MIN ? "live" : age < 2 * HR ? "warm" : "") }), h("span", { class: "n", title: n.name }, n.name)),
         h("div", { class: "m mono" }, n.repo || (n.elsewhere ? "known only from a message" : "no repo")),
         h("div", { class: "chips" }, n.untraced ? h("span", { class: "pill p-untraced" }, "not traced") : null, isNaN(n.lastTs) ? null : h("span", { class: "chip" }, "seen " + ago(n.lastTs)),
-          n.sent || n.got ? h("span", { class: "chip" }, n.sent + " sent · " + n.got + " in") : null, n.vault ? h("span", { class: "chip v" }, "vault ×" + n.vault.n) : null));
+          n.sent || n.got ? h("span", { class: "chip" }, n.sent + " sent · " + n.got + " in") : null, n.vault ? h("span", { class: "chip v" }, "vault ×" + n.vault.n) : null,
+          n.hidden ? h("span", { class: "chip", title: "Finished helpers and done jobs are hidden; Show finished brings them back" }, n.hidden + " finished") : null));
     }
     if (n.kind === "helpers") {
       const names = n.items.map((i) => i.desc || "untitled"), short = names.length > 2 ? names.slice(0, 2).join(", ") + ", +" + (names.length - 2) + " more" : names.join(", ");
@@ -819,7 +823,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     return { title: "You", sub: "the owner", body: [h("p", null, "Not traced today. You dispatch the A100 queue by a standing rule; nothing here shows your Go ahead or Wait answers.")] };
   }
   function renderConn(M) {
-    const C = (S.conn = OfficeFlow.connections(M, { machines: machines(), queue: S.queue, now: now(), expanded: Object.keys(S.cmore).filter((k) => S.cmore[k]), order: S.order.sessions }));
+    const C = (S.conn = OfficeFlow.connections(M, { machines: machines(), queue: S.queue, now: now(), expanded: Object.keys(S.cmore).filter((k) => S.cmore[k]), order: S.order.sessions, showFinished: S.showFinished }));
     if (S.csel && !C.nodes[S.csel] && !C.edges.some((e) => e.id === S.csel)) S.csel = null;
     const st = C.stats;
     $("csummary").replaceChildren(...[["Sessions", st.sessions, ""], ["Not traced", st.untraced, ""], ["Helpers running", st.helpersRunning, st.helpersRunning ? "hot" : ""], ["Messages · 24 h", st.messages, ""],
@@ -988,6 +992,8 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     e.stopPropagation(); dismiss(t.dataset.dismiss);
   }, true);
   $("restore").addEventListener("click", restoreAll);
+  $("show-finished").setAttribute("aria-pressed", String(S.showFinished));
+  $("show-finished").addEventListener("click", () => { S.showFinished = !S.showFinished; store.set("office.showFinished", S.showFinished ? "1" : null); $("show-finished").setAttribute("aria-pressed", String(S.showFinished)); refresh(); });
   $("arrange").addEventListener("click", () => { S.arrange = !S.arrange; $("arrange").setAttribute("aria-pressed", String(S.arrange)); $("arrange-reset").hidden = !S.arrange; refresh(); });
   $("arrange-reset").addEventListener("click", () => { S.order = { machines: [], sessions: [] }; saveOrder(); refresh(); });
   $("only-path").addEventListener("change", (e) => { S.onlyPath = e.target.checked; $("fstages").classList.toggle("only-path", S.onlyPath && !!(S.flow && S.flow.question)); requestAnimationFrame(drawDeps); });
