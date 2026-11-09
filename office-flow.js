@@ -225,6 +225,8 @@
       if (!groups.has(key)) groups.set(key, { key, id: ids[0] || null, jobs: [] });
       groups.get(key).jobs.push(j);
     });
+    // a done queue item whose eval job is still going reads as that job's state (A12 trained = done, its 220-route pass = running)
+    byKey.forEach((c) => { const live_ = c.state === "done" && c.jobs.find((x) => x.state === "running" || x.state === "queued"); if (live_) c.state = live_.state; });
     byKey.forEach((c) => { if (c.jobs.length) { const j = c.jobs.slice().sort((a, b) => (JOB_ORDER[a.state] ?? 9) - (JOB_ORDER[b.state] ?? 9))[0]; c.meta = [j.machine + " " + (j.res || ""), j.pct && j.state !== "done" ? j.pct + "%" : "", j.progress, j.eta && "ETA " + j.eta, c.meta].filter(Boolean).join(" · "); } });
     groups.forEach((g) => {
       const sorted = g.jobs.slice().sort((a, b) => (JOB_ORDER[a.state] ?? 9) - (JOB_ORDER[b.state] ?? 9) || (a.id < b.id ? -1 : 1)), j = sorted[0], text = g.jobs.map((x) => x.id + " " + (x.task || "")).join(" ");
