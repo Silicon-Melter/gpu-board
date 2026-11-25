@@ -8,73 +8,19 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="board.css">
 <style>
 /* Layout: summary, vault cabinet + A100 queue, then one room per machine (a desk per session, its helper desks under it), message arcs on top; a desk opens a side panel */
-:root {
-  --bg: #eef1f0; --surface: #fbfcfc; --surface-2: #f3f6f5; --ink: #131a18; --muted: #5a6661; --line: #d5dcd9;
-  --accent: #0e6a5f; --accent-soft: #dceeea; --glow: rgb(14 106 95 / .35);
-  --run: #2257ad; --run-bg: #e3ebf9; --queue: #855600; --queue-bg: #f7ebd2; --pause: #6546ab; --pause-bg: #ebe5f7;
-  --go: #19743a; --go-bg: #dcf1e3; --hold: #5f676d; --hold-bg: #e6e9eb; --bad: #b22a1f; --bad-bg: #fae4e1; --stale: #a84a06; --stale-bg: #fcebdc;
-  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
-  --body: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --radius: 10px;
-}
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
-  --accent: #4cc1ae; --accent-soft: #163631; --glow: rgb(76 193 174 / .4);
-  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
-  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
-  color-scheme: dark; } }
-:root[data-theme="dark"] {
-  --bg: #0e1312; --surface: #151c1a; --surface-2: #1b2321; --ink: #e5ebe9; --muted: #93a19b; --line: #2a3431;
-  --accent: #4cc1ae; --accent-soft: #163631; --glow: rgb(76 193 174 / .4);
-  --run: #93b6ff; --run-bg: #1a2741; --queue: #efb54c; --queue-bg: #33270f; --pause: #bca6ff; --pause-bg: #261f3c;
-  --go: #6fd18f; --go-bg: #13301d; --hold: #a6adb2; --hold-bg: #252a2d; --bad: #ff8b7c; --bad-bg: #3a1814; --stale: #ffa45c; --stale-bg: #3a2210;
-  color-scheme: dark;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
-[hidden] { display: none !important; }
-.wrap { max-width: 1320px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-.mono { font-family: var(--mono); font-size: 12px; }
-button { font: inherit; color: inherit; cursor: pointer; }
 button:focus-visible, input:focus-visible, a:focus-visible, .desk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-h1, h2, h3 { margin: 0; text-wrap: balance; }
-.fine { color: var(--muted); font-size: 12.5px; }
 
-.notice { background: var(--queue-bg); color: var(--queue); border-bottom: 1px solid var(--line); }
 .notice .wrap { padding-block: 9px; font-size: 13px; }
-.top .wrap { padding-block: 20px 12px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: end; justify-content: space-between; }
-.brand h1 { font-family: var(--display); font-stretch: 72%; font-weight: 800; font-size: 34px; letter-spacing: -.01em; line-height: 1; text-transform: uppercase; }
 .brand p { margin: 6px 0 0; color: var(--muted); max-width: 70ch; }
-.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
-.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
-.seg a { padding: 6px 12px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; text-decoration: none; }
-.seg a:hover { color: var(--ink); }
 .seg a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
 
-.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 7px; padding: 6px 12px; font-weight: 650; font-size: 13px; }
-.btn:hover { border-color: var(--muted); }
-.btn.go { background: var(--go); border-color: var(--go); color: var(--surface); }
-.btn.link { background: none; border-color: transparent; color: var(--accent); padding-inline: 4px; text-decoration: underline; text-underline-offset: 2px; }
-a.btn { text-decoration: none; display: inline-flex; align-items: center; }
-.setup { max-width: 640px; margin-block: 8px 48px; }
-.setup .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 12px; }
-.setup ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
-.setup input { font: inherit; font-family: var(--mono); font-size: 13px; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); width: 100%; }
-.setup .row { display: flex; gap: 8px; flex-wrap: wrap; }
-.setup .err { color: var(--bad); font-size: 13px; }
 
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-block: 8px 18px; }
-.stat { background: var(--surface); padding: 12px 14px; }
-.stat b { display: block; font-family: var(--display); font-stretch: 80%; font-size: 28px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
-.stat span { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
 .stat.hot b { color: var(--accent); }
 .sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
-.sec-head h2 { font-family: var(--display); font-stretch: 80%; font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
-.sec-head p { margin: 0; color: var(--muted); font-size: 13px; }
-.sec-head .btn { margin-left: auto; }
 
 .infra { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px; margin-bottom: 22px; align-items: start; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
@@ -166,7 +112,6 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .rd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--run); margin-right: 5px; }
 /* ---- view tabs, Connections (machine lanes -> leads -> what they started) ---- */
 .pill.p-ready, .pill.p-open, .pill.p-untraced { color: var(--hold); background: var(--hold-bg); } .pill.p-ready { color: var(--queue); background: var(--queue-bg); }
-.stat.warn b { color: var(--stale); }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 10px; font-size: 12.5px; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend svg { flex: none; }
@@ -386,37 +331,33 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   </section>
 </main>
 
+<script src="board-core.js"></script>
 <script src="office-model.js"></script>
 <script src="office-flow.js"></script>
 <script>
 (function () {
   "use strict";
-  const API = "https://api.github.com/repos/Silicon-Melter/agent-board";
-  const RELAY = "https://gpu-board-signin.noppawit37815.workers.dev/"; // the board's sign-in relay, used only to renew an 8 h signed-in token
+  const { MIN, HR, DAY, store, ms, sessionUrl, b64decode, b64encode } = BoardCore;
+  // the token the Board page saved; the sign-in relay is used here only to renew an 8 h signed-in token
+  const GH = BoardCore.github({ api: "https://api.github.com/repos/Silicon-Melter/agent-board", relay: "https://gpu-board-signin.noppawit37815.workers.dev/" });
+  const { gh } = GH;
+  const readFile = async (path, ref) => { const f = await GH.readFile(path, ref); return f && f.text; };
   const QUEUE_URL = "https://api.github.com/repos/Silicon-Melter/ad-train-a100/contents/QUEUE.md";
-  const MIN = 60e3, HR = 3600e3, DAY = 24 * HR;
   const POLL = 30e3, SYNC_SILENT = 6 * MIN, GLOW = 60 * MIN, SUB_MAX = 6, EV_MAX = 30, SUB_STALE = 6 * HR;
   const PILLS = ["running", "queued", "paused", "blocked", "failed", "done"];
   const params = new URLSearchParams(location.search);
   // ?fixture=office-fixture.json reads that file from this folder instead of GitHub (offline review; no token needed)
   const FIXTURE = /^[\w.-]+\.json$/.test(params.get("fixture") || "") ? params.get("fixture") : null;
 
-  const store = {
-    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-    set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage blocked: lasts for this visit */ } }
-  };
   function readOrder() {  // {machines: [ids], sessions: [sids or node ids]}; anything unreadable means the default order
     try { const o = JSON.parse(store.get("office.order") || "null"); return { machines: Array.isArray(o && o.machines) ? o.machines.map(String) : [], sessions: Array.isArray(o && o.sessions) ? o.sessions.map(String) : [] }; }
     catch (e) { return { machines: [], sessions: [] }; }
   }
-  let auth = null; // a signed-in token's refresh token and expiry (written by the board page); null for a pasted token
-  try { auth = JSON.parse(store.get("gpu-board.auth") || "null"); } catch (e) { auth = null; }
-  const S = { token: store.get("gpu-board.token"), status: "loading", error: "", control: null, states: {}, queue: null, loading: false,
+  const S = { status: "loading", error: "", control: null, states: {}, queue: null, loading: false,
     sel: null, want: params.get("select"), more: {}, model: null, fixedNow: null, view: "connections", fsel: null, onlyPath: false, question: null, csel: null, cmore: {}, conn: null,
     arrange: false, order: readOrder(), showFinished: store.get("office.showFinished") === "1" };
   const $ = (id) => document.getElementById(id);
   const now = () => (S.fixedNow != null ? S.fixedNow : Date.now());
-  const ms = OfficeModel.ms;
   const machines = () => OfficeModel.orderBy(OfficeModel.machines(S.control), (m) => m.id, S.order.machines);
   // ▲▼ for one item while arranging: kind "m" (machine) or "s" (session, within `group` = its machine or lane)
   function mvEl(kind, key, group, keys, name) {
@@ -430,7 +371,6 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     if (S.view === "connections" && S.conn) return Object.values(S.conn.nodes).filter((n) => n.kind === "lead" && n.lane === group).sort((a, b) => a.y - b.y).map((n) => n.sid || n.id);
     return OfficeModel.orderBy((S.model && S.model.byMachine[group]) || [], (d) => d.sid, S.order.sessions).map((d) => d.sid);
   }
-  const sessionUrl = (s) => (/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(String(s || "")) ? s : null);
 
   // DOM builders: text only ever goes in as text nodes or attribute values, never as markup
   function build(el, attrs, kids) {
@@ -441,53 +381,16 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   const h = (tag, attrs, ...kids) => build(document.createElement(tag), attrs, kids);
   const sv = (tag, attrs, ...kids) => build(document.createElementNS("http://www.w3.org/2000/svg", tag), attrs, kids);
 
-  function ago(ts) {
-    const d = now() - ts;
-    if (!isFinite(d)) return "at an unknown time";
-    if (d < 45e3) return "just now";
-    if (d < HR) return Math.max(1, Math.round(d / MIN)) + " min ago";
-    if (d < 48 * HR) { const hh = Math.floor(d / HR), mm = Math.round((d % HR) / MIN); return hh + " h" + (mm ? " " + mm + " min" : "") + " ago"; }
-    return Math.round(d / DAY) + " d ago";
-  }
+  const ago = (ts) => BoardCore.ago(ts, now());
   const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
   const shortModel = OfficeModel.shortModel;
 
-  // ---- GitHub (same approach as the board page) -------------------------------------------------------------------
-  function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0))); }
-  let renewing = null;
-  function renew() {
-    return (renewing = renewing || fetch(RELAY, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: auth.refresh }) })
-      .then(async (r) => {
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok || !j.access_token) throw new Error("the sign-in relay said " + r.status);
-        S.token = j.access_token;
-        auth = j.refresh_token ? { refresh: j.refresh_token, exp: j.expires_in ? Date.now() + j.expires_in * 1000 : null } : null;
-        store.set("gpu-board.token", S.token); store.set("gpu-board.auth", auth && JSON.stringify(auth));
-      }).finally(() => { renewing = null; }));
-  }
-  async function gh(path, opts) {
-    if (auth && auth.exp && Date.now() > auth.exp - MIN) await renew().catch(() => {});
-    for (let tries = 0; ; tries++) {
-      const r = await fetch(/^https:/.test(path) ? path : API + path, Object.assign({ cache: "no-store" }, opts, {
-        headers: Object.assign({ Authorization: "Bearer " + S.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, (opts && opts.headers) || {})
-      }));
-      if (r.status === 401 && auth && !tries && await renew().then(() => true, () => false)) continue;
-      if (r.status === 401) { const e = new Error("GitHub rejected the token"); e.auth = true; throw e; }
-      return r;
-    }
-  }
-  async function readFile(path, ref) {
-    const r = await gh("/contents/" + path + "?ref=" + encodeURIComponent(ref));
-    if (r.status === 404) return null;
-    if (!r.ok) throw new Error("GitHub said " + r.status + " for " + path + " on " + ref);
-    return b64decode((await r.json()).content);
-  }
+  // ---- GitHub: reading and renewing go through board-core.js, shared with the board page ---------------------------
   // ---- writing control.json (only for Dismiss / Restore; same file and method as the board page's Clear) ----------
-  function b64encode(text) { let bin = ""; new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); }
   const KEEP_DISMISSED = 14 * DAY;
   async function saveControl(mutate, message) {
-    const prune = (data) => { const cut = Date.now() - KEEP_DISMISSED; Object.keys(data.dismissed || {}).forEach((k) => { if (ms(data.dismissed[k].at) < cut) delete data.dismissed[k]; }); if (data.dismissed && !Object.keys(data.dismissed).length) delete data.dismissed; };
+    const prune = (data) => { const cut = now() - KEEP_DISMISSED; Object.keys(data.dismissed || {}).forEach((k) => { if (ms(data.dismissed[k].at) < cut) delete data.dismissed[k]; }); if (data.dismissed && !Object.keys(data.dismissed).length) delete data.dismissed; };
     if (FIXTURE) { const data = JSON.parse(JSON.stringify(S.control)); mutate(data); prune(data); S.control = data; return; }  // offline sample: change it in memory only
     for (let attempt = 0; attempt < 2; attempt++) {
       const r = await gh("/contents/control.json?ref=board%2Fcontrol");
@@ -604,7 +507,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     });
   }
   function roomEl(m, M) {
-    const t = S.states[m.id] ? { st: S.states[m.id], silent: now() - ms(S.states[m.id].at) > SYNC_SILENT } : null;
+    const t = stateOf(m);
     const gear = gearOf(m, t);
     const mine = OfficeModel.orderBy(M.byMachine[m.id] || [], (d) => d.sid, S.order.sessions), orph = M.orphans[m.id] || [];
     const mkeys = machines().map((x) => x.id), skeys = mine.map((d) => d.sid);
@@ -805,14 +708,14 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     if (!n) return null;
     if (n.kind === "lead") {
       const d = n.sid && M.desks.get(n.sid), evs = d ? d.ev.slice(-EV_MAX).reverse() : [];
-      const msgs = C.edges.filter((x) => x.type === "msg" && x.ends.includes(n.id)).flatMap((x) => x.msgs).filter((m) => !d || !d.ev.some((ev) => ev.ev === "message" && OfficeModel.ms(ev.ts) === m.ts && m.from === n.id)).sort((a, b) => b.ts - a.ts);
+      const msgs = C.edges.filter((x) => x.type === "msg" && x.ends.includes(n.id)).flatMap((x) => x.msgs).filter((m) => !d || !d.ev.some((ev) => ev.ev === "message" && ms(ev.ts) === m.ts && m.from === n.id)).sort((a, b) => b.ts - a.ts);
       const note = n.elsewhere ? "Known only from a message to this name. It has no machine or session here." : n.untraced ? "This machine does not trace sessions. The session is known from its board job" + (n.aliases.length ? ", and its name from messages to " + n.aliases.map((a) => "'" + a + "'").join(", ") : "") + "." : "";
       return { title: n.name, sub: [n.repo || "no repo", n.machine, n.sid ? n.sid.slice(0, 8) : "", isNaN(n.lastTs) ? "" : "seen " + ago(n.lastTs)].filter(Boolean).join(" · "), body: [
         d ? h("div", null, dismissBtn(d)) : null,
         note ? h("p", { class: "fine" }, note) : null,
         n.vault ? h("p", null, "Vault: " + n.vault.n + " write" + (n.vault.n === 1 ? "" : "s") + " (" + Object.entries(n.vault.ops).map(([k, c]) => c + " " + k).join(", ") + "), last " + ago(n.vault.last) + ".") : null,
         d && d.jobs.length ? [h("h4", null, "Board jobs"), d.jobs.map((j) => jobEl(j, d))] : null,
-        evs.length ? [h("h4", null, "Last " + evs.length + " events, newest first"), h("ol", null, evs.map((ev) => li(fmtT(OfficeModel.ms(ev.ts)), words(ev, d))))]
+        evs.length ? [h("h4", null, "Last " + evs.length + " events, newest first"), h("ol", null, evs.map((ev) => li(fmtT(ms(ev.ts)), words(ev, d))))]
           : msgs.length ? [h("h4", null, "Messages, newest first"), h("ol", null, msgs.map((m) => li(fmtT(m.ts), m.fromName + " → " + m.toName + ": " + (m.summary || "no summary"))))] : h("p", { class: "fine" }, "No traced events.")] };
     }
     if (n.kind === "helpers") return { title: n.label + " helpers of " + nm(n.lead), sub: n.count + " started in 24 h", body: [h("ol", null, n.items.map((i) => li(fmtT(i.start), (i.inside ? "↳ " : "") + (i.desc || "untitled") + " · " + (i.state === "running" ? "running" : i.state === "stale" ? "no stop seen" : "done" + (i.tok != null && !isNaN(i.tok) ? ", " + fmtTok(i.tok) + " tokens" : "")) + (i.inside ? " (inside '" + i.inside + "')" : ""))))] };
@@ -908,7 +811,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     });
   }
   function render() {
-    const connected = !!S.token || !!FIXTURE;
+    const connected = !!GH.session.token || !!FIXTURE;
     $("setup").hidden = connected;
     $("office").hidden = !connected || !S.control;
     $("token-err").hidden = !(S.status === "need-token" && S.error);
@@ -1009,7 +912,7 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
     e.preventDefault();
     const v = $("token-input").value.trim();
     if (!v) return;
-    S.token = v; auth = null; store.set("gpu-board.token", v); store.set("gpu-board.auth", null); $("token-input").value = ""; S.status = "loading"; S.error = "";
+    GH.save(v, null); $("token-input").value = ""; S.status = "loading"; S.error = "";
     refresh(); load();
   });
   let resizeRaf = 0;
@@ -1018,17 +921,17 @@ svg.deps { position: absolute; left: 0; top: 0; pointer-events: none; overflow: 
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawArcs(); drawDeps(); });
 
   async function load() {
-    if (S.loading || (!FIXTURE && !S.token)) return;
+    if (S.loading || (!FIXTURE && !GH.session.token)) return;
     S.loading = true;
     try { await (FIXTURE ? loadFixture() : loadLive()); S.status = "ready"; S.error = ""; }
     catch (e) {
-      if (e.auth) { S.token = null; auth = null; store.set("gpu-board.token", null); store.set("gpu-board.auth", null); S.status = "need-token"; S.error = "GitHub rejected the token (expired or revoked). Sign in again on the Board page, or paste a new token."; }
+      if (e.auth) { GH.save(null, null); S.status = "need-token"; S.error = "GitHub rejected the token (expired or revoked). Sign in again on the Board page, or paste a new token."; }
       else { S.error = String(e.message || e); if (S.status !== "ready") S.status = "error"; }
     }
     S.loading = false;
     refresh();
   }
-  if (!S.token && !FIXTURE) S.status = "need-token";
+  if (!GH.session.token && !FIXTURE) S.status = "need-token";
   render();
   load();
   setInterval(() => { if (!document.hidden) load(); }, POLL);

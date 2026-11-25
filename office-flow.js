@@ -63,12 +63,9 @@
 
     // 1. who is a lead: every desk; messages to a name that is no desk become an untraced node
     const leadOf = new Map();  // node id -> lead data
-    const deskLead = (d) => {
-      const sent = 0;
-      return { id: "d:" + d.sid, sid: d.sid, kind: "lead", name: d.name, repo: d.repo, machine: d.machine, lastTs: d.lastTs, untraced: !d.traced,
-        glow: !!d.vaultLast && now - d.vaultLast <= GLOW, vault: d.vault ? { n: d.vault, ops: Object.assign({}, d.ops), last: d.vaultLast } : null, aliases: [], sent, got: 0, d,
-        hidden: opts.showFinished ? 0 : finishedOf(d, now) };
-    };
+    const deskLead = (d) => ({ id: "d:" + d.sid, sid: d.sid, kind: "lead", name: d.name, repo: d.repo, machine: d.machine, lastTs: d.lastTs, untraced: !d.traced,
+      glow: !!d.vaultLast && now - d.vaultLast <= GLOW, vault: d.vault ? { n: d.vault, ops: Object.assign({}, d.ops), last: d.vaultLast } : null, aliases: [], sent: 0, got: 0, d,
+      hidden: opts.showFinished ? 0 : finishedOf(d, now) });
     M.list.forEach((d) => leadOf.set("d:" + d.sid, deskLead(d)));
     const untracedIn = (mid) => [...leadOf.values()].filter((l) => l.untraced && l.machine === mid);
     const target = (name) => {  // where a message to `name` (no desk of that name) lands
@@ -104,9 +101,9 @@
       const leads = OM.orderBy([...leadOf.values()].filter((l) => (known.has(l.machine) ? l.machine : "elsewhere") === ln.id).sort((p, q) => (p.untraced - q.untraced) || byText((l) => l.name.toLowerCase())(p, q)),
         (l) => l.sid || l.id, opts.order);
       leads.forEach((l, i) => {
-        const kids = l.d ? kidsOf(l.d, now, opts) : [], kh = kids.length ? kids.length * PITCH - (PITCH - KID_H) : 0, block = Math.max(kh, LEAD_H);
-        nodes[l.id] = Object.assign({}, l, { d: undefined, x: X.lead, y: y + (block - LEAD_H) / 2, w: X.leadW, h: LEAD_H, lane: ln.id });
-        delete nodes[l.id].d;
+        const { d: desk, ...lead } = l;  // the desk feeds the children; the node itself doesn't carry it
+        const kids = desk ? kidsOf(desk, now, opts) : [], kh = kids.length ? kids.length * PITCH - (PITCH - KID_H) : 0, block = Math.max(kh, LEAD_H);
+        nodes[l.id] = Object.assign(lead, { x: X.lead, y: y + (block - LEAD_H) / 2, w: X.leadW, h: LEAD_H, lane: ln.id });
         kids.forEach((k, j) => { nodes[k.id] = Object.assign({}, k, { x: X.kid, y: y + (block - kh) / 2 + j * PITCH, w: X.kidW, h: KID_H, lane: ln.id }); });
         y += block + (i < leads.length - 1 ? 20 : 12);
       });
@@ -205,7 +202,7 @@
   const eventsOf = (M) => M.list.flatMap((d) => d.ev.map((ev) => Object.assign({}, ev, { sid: d.sid, session: d.name })));
 
   function workflow(M, opts) {
-    const now = opts.now, DAYMS = DAY, items = opts.queue && opts.queue.items ? opts.queue.items : [], jobs = opts.jobs || jobsOf(M), events = opts.events || eventsOf(M);
+    const now = opts.now, items = opts.queue && opts.queue.items ? opts.queue.items : [], jobs = opts.jobs || jobsOf(M), events = opts.events || eventsOf(M);
     const q = opts.question && Array.isArray(opts.question.path) ? opts.question : null;
     const over = (it) => OVER.includes(it.word), qIds = new Set(items.map((it) => it.id));
     const path = q ? q.path.map((e, i) => (e && e.id ? { key: String(e.id), id: String(e.id), stage: e.stage || null } : { key: "path:" + i, id: null, label: String((e && e.label) || "next"), stage: (e && e.stage) || "eval" })) : [];
@@ -213,7 +210,7 @@
     const owner = (j) => { const d = j.session_id && M.desks.get(j.session_id); return d ? d.name + (d.traced ? "" : " (not traced)") : j.repo || ""; };
     const machineTokens = new Set([...(opts.machines || []).map((m) => m.id), ...jobs.map((j) => j.machine)].flatMap((id) => String(id || "").toUpperCase().split(/[^A-Z0-9]+/)).filter(Boolean));  // "u24" in a job id is the machine, not a task
     const taskIds = (text) => idsOf(text).filter((x) => !machineTokens.has(x));
-    const live = jobs.filter((j) => j.state !== "done" || now - OM.ms(j.updated) <= DAYMS);
+    const live = jobs.filter((j) => j.state !== "done" || now - OM.ms(j.updated) <= DAY);
     const cards = [], byKey = new Map(), add = (c) => { cards.push(c); byKey.set(c.key, c); return c; };
     let finished = 0;
 
@@ -272,7 +269,7 @@
     // stale blocker: a blocked item and a job that finished in the window which shares a task id or two significant words
     items.filter((it) => it.word === "blocked" && byKey.has(it.id)).forEach((it) => {
       const text = it.text + " " + it.needs, bw = words(text), bid = idsOf(text);
-      const fin = live.filter((j) => j.state === "done" && now - OM.ms(j.updated) <= DAYMS).find((j) => {
+      const fin = live.filter((j) => j.state === "done" && now - OM.ms(j.updated) <= DAY).find((j) => {
         const jt = (j.task || "") + " " + j.id.toUpperCase();
         return idsOf(jt).some((x) => bid.includes(x) && x !== it.id) || [...words(jt)].filter((w) => bw.has(w)).length >= 2;
       });
